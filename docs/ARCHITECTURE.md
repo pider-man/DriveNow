@@ -272,8 +272,8 @@ The tables have exactly the fields the PRD names. Constraints and indexes aren't
 | `id` | `Integer`, primary key, autoincrement | no | "rental ID" |
 | `car_id` | `Integer`, `ForeignKey("cars.id", ondelete="RESTRICT")` | no | "car ID"; indexed |
 | `customer_name` | `String(100)` | no | B8: non-blank |
-| `start_date` | `DateTime(timezone=True)` | no | UTC (D7) |
-| `end_date` | `DateTime(timezone=True)` | yes | `NULL` while the rental is ongoing |
+| `start_date` | `UTCDateTime` (wraps `DateTime(timezone=True)`) | no | UTC (D7) |
+| `end_date` | `UTCDateTime` | yes | `NULL` while the rental is ongoing |
 
 Constraints (safety nets for rules the service enforces first):
 
@@ -284,7 +284,9 @@ Constraints (safety nets for rules the service enforces first):
 
 `CarStatus` is a `str` enum. Its values (`available`, `in_use`, `under_maintenance`) appear the same in the DB, the API and the logs. `native_enum=False` stores them as `VARCHAR` with a CHECK constraint, which behaves the same on PostgreSQL and SQLite.
 
-The ORM model relationship is `Car.rentals` ↔ `Rental.car`, loaded lazily and used only inside the data layer.
+`UTCDateTime` (`db/types.py`) stores every timestamp in UTC. A naive value is treated as UTC, and values are always read back as aware UTC. PostgreSQL stores `TIMESTAMP WITH TIME ZONE`. SQLite has no time zone support, so values are stored as naive UTC text in one fixed format, which keeps the CHECK comparison correct.
+
+The models define no ORM relationships. Repositories query rentals by `car_id`, so there are no lazy loads that could fail after the session closes (DetachedInstanceError). The session factory uses `expire_on_commit=False`, and the Unit of Work closes the session without expiring objects, so returned objects stay readable.
 
 ## 7. REST API (F1–F7)
 
@@ -329,7 +331,7 @@ Supporting endpoints (not in the PRD's list):
 
 F5 is a `POST` action on the rental, not `PATCH /rentals/{id}`, because ending a rental is a command with side effects on the car (B1), not a field edit.
 
-**Dates (D7, B7).** `start_date` and `end_date` are optional in the requests and default to the server clock (UTC). Staff can supply an earlier time to record a rental that started or ended in the past. Supplied datetimes must include a timezone (a naive datetime returns 422), and they are converted to UTC. A time in the future returns `422 DATE_IN_FUTURE`, and an end before the start returns `422 END_BEFORE_START`.
+**Dates (D7, B7).** `start_date` and `end_date` are optional in the requests and default to the server clock (UTC). Staff can supply an earlier time to record a rental that started or ended in the past. A supplied datetime without a timezone is accepted and treated as UTC (reviewers type plain times in Swagger). One with an offset is converted to UTC. A time in the future returns `422 DATE_IN_FUTURE`, and an end before the start returns `422 END_BEFORE_START`.
 
 ### Error mapping (`api/errors.py`)
 
@@ -352,7 +354,7 @@ Every rule lives in the service layer, so it holds for any interface. The API sc
 | B4 `in_use` only through rentals | `CarService.create_car` / `update_car` reject `status == in_use` | `CarCreate` / `CarUpdate` schemas allow only `available` / `under_maintenance` | none |
 | B5 a rented car's status can't change and it can't be deleted | `CarService.update_car` (when `status` is in the payload) and `delete_car` raise `CarRentedError` when the car has an ongoing rental | none | FK `RESTRICT` blocks deleting a car that has rentals |
 | B6 new car is `available` or `under_maintenance` | `CarService.create_car` defaults to `available` | `CarCreate.status` default and allowed values | column default |
-| B7 no double end; end ≥ start; no future times | `RentalService.start_rental` rejects `start_date > clock.now()`. `RentalService.end_rental` loads the rental `for_update=True`, raises `RentalAlreadyEndedError` if `end_date` is set, uses the given `end_date` or `clock.now()`, and requires `start_date ≤ end_date ≤ clock.now()` | Pydantic requires timezone-aware datetimes | `ck_rentals_end_after_start` |
+| B7 no double end; end ≥ start; no future times | `RentalService.start_rental` rejects `start_date > clock.now()`. `RentalService.end_rental` loads the rental `for_update=True`, raises `RentalAlreadyEndedError` if `end_date` is set, uses the given `end_date` or `clock.now()`, and requires `start_date ≤ end_date ≤ clock.now()` | Pydantic parses datetimes; naive values are treated as UTC | `ck_rentals_end_after_start` |
 | B8 model and customer name required; realistic year | `CarService` / `RentalService` validate (strip, non-blank; `1886 ≤ year ≤ current_year + 1`) | Pydantic: `min_length=1`, stripped strings, year bounds | `NOT NULL`, `ck_cars_year_positive` |
 | B9 deleting a car deletes its finished history (D6) | `CarService.delete_car`: after the B5 check, `rentals.delete_finished_for_car` and then `cars.delete`, in one Unit of Work | none | FK `RESTRICT` ensures the order is explicit |
 
@@ -441,7 +443,7 @@ The open questions from the step 1 review were answered on 2026-09-30. The secti
 
 1. **Approval.** All D1–D10 recommendations and business rules B1–B9 are approved as written in the PRD.
 2. **B5 scope.** A rented car's `model` and `year` can still be corrected. Only a status change and deletion are blocked while it is rented.
-3. **Dates (B7, D7).** `start_date` and `end_date` default to the server clock (UTC). `POST /rentals` and `POST /rentals/{id}/end` each accept an optional time, so staff can record a rental that started or ended earlier. Future times are rejected (`422 DATE_IN_FUTURE`), and so is an end before the start (`422 END_BEFORE_START`).
+3. **Dates (B7, D7).** `start_date` and `end_date` default to the server clock (UTC). `POST /rentals` and `POST /rentals/{id}/end` each accept an optional time, so staff can record a rental that started or ended earlier. Future times are rejected (`422 DATE_IN_FUTURE`), and so is an end before the start (`422 END_BEFORE_START`). A time without a timezone is accepted and treated as UTC, and a time with an offset is converted to UTC.
 4. **Realistic year (B8).** 1886 up to the current year + 1.
 5. **Status values.** `available`, `in_use`, `under_maintenance` in JSON, the DB and query strings.
 6. **IDs.** Auto-increment integers.
@@ -452,3 +454,4 @@ The open questions from the step 1 review were answered on 2026-09-30. The secti
 11. **Queue delivery.** Best-effort publishing after commit is acceptable for this scope, and failures are logged. *README future work:* a transactional outbox.
 12. **D10 prototype.** Ignored. There is no prototype to consult.
 13. **Tests per step.** Step 1 was documentation only and has no tests. Every step from step 2 onward includes tests.
+14. **`/stats` before any traffic.** `avg_response_time_ms` is `null` until the first request has been measured.
