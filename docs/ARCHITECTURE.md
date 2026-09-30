@@ -205,8 +205,10 @@ sequenceDiagram
 │   ├── config.py                 # Settings: DATABASE_URL, LOG_LEVEL, LOG_FILE, RABBITMQ_URL, ...
 │   ├── domain/
 │   │   ├── enums.py              # CarStatus
-│   │   ├── exceptions.py         # DomainError, NotFoundError, BusinessRuleViolation, InvalidInputError
-│   │   └── events.py             # DomainEvent + event name constants
+│   │   ├── exceptions.py         # DomainError, NotFoundError, BusinessRuleViolation, InvalidInputError, DataIntegrityError
+│   │   ├── events.py             # DomainEvent + event name constants
+│   │   ├── records.py            # CarRecord, RentalRecord: plain objects the services return
+│   │   └── timeutil.py           # to_utc (naive = UTC)
 │   ├── db/
 │   │   ├── base.py               # DeclarativeBase
 │   │   ├── models.py             # Car, Rental ORM models
@@ -215,8 +217,10 @@ sequenceDiagram
 │   │   ├── interfaces.py         # CarRepository, RentalRepository, UnitOfWork protocols
 │   │   ├── car_repository.py     # SqlAlchemyCarRepository
 │   │   ├── rental_repository.py  # SqlAlchemyRentalRepository
+│   │   ├── errors.py             # IntegrityError -> DataIntegrityError
 │   │   └── unit_of_work.py       # SqlAlchemyUnitOfWork
 │   ├── services/
+│   │   ├── _support.py           # validation, rejection logging, best-effort publish
 │   │   ├── clock.py              # Clock protocol, SystemClock (UTC)
 │   │   ├── car_service.py        # CarService (F1, F2, F3, F6, F7)
 │   │   ├── rental_service.py     # RentalService (F4, F5, F7)
@@ -235,7 +239,7 @@ sequenceDiagram
 │   │   ├── metrics.py            # gauges, histograms, track_operation decorator
 │   │   └── middleware.py         # request timing middleware
 │   └── messaging/
-│       ├── publisher.py          # EventPublisher protocol, NullPublisher, RabbitMQPublisher
+│       ├── publisher.py          # EventPublisher protocol, NullPublisher, InMemoryPublisher, RabbitMQPublisher
 │       └── worker.py             # `python -m drivenow.messaging.worker`
 └── tests/
     ├── conftest.py               # SQLite in-memory engine, fakes, TestClient fixtures
@@ -350,7 +354,7 @@ Every rule lives in the service layer, so it holds for any interface. The API sc
 | --- | --- | --- | --- |
 | B1 rental start → `in_use`, end → `available` | `RentalService.start_rental` / `end_rental` change the car status in the same Unit of Work as the rental insert/update | none | single transaction |
 | B2 only an `available` car can be rented | `RentalService.start_rental` loads the car `for_update=True` and raises `CarNotAvailableError` unless the status is `available` | none | row lock (PostgreSQL) |
-| B3 at most one ongoing rental per car | `RentalService.start_rental` checks `rentals.get_ongoing_for_car` | none | partial unique index `ix_rentals_one_ongoing_per_car`; an `IntegrityError` becomes a 409 |
+| B3 at most one ongoing rental per car | `RentalService.start_rental` checks `rentals.get_ongoing_for_car` | none | partial unique index `ix_rentals_one_ongoing_per_car`; the data layer raises `DataIntegrityError` and the service turns it into `CAR_NOT_AVAILABLE` (409), never a 500 |
 | B4 `in_use` only through rentals | `CarService.create_car` / `update_car` reject `status == in_use` | `CarCreate` / `CarUpdate` schemas allow only `available` / `under_maintenance` | none |
 | B5 a rented car's status can't change and it can't be deleted | `CarService.update_car` (when `status` is in the payload) and `delete_car` raise `CarRentedError` when the car has an ongoing rental | none | FK `RESTRICT` blocks deleting a car that has rentals |
 | B6 new car is `available` or `under_maintenance` | `CarService.create_car` defaults to `available` | `CarCreate.status` default and allowed values | column default |
@@ -412,6 +416,7 @@ The gauges are computed from the database at scrape time, not kept as counters i
 - **Implementations**:
   - `RabbitMQPublisher` (when `RABBITMQ_URL` is set) uses `pika`. It declares a durable **topic** exchange `drivenow.events` and publishes persistent JSON messages with routing key = event name. A lock and lazy reconnect make it safe across FastAPI's thread pool.
   - `NullPublisher` (standalone default) does nothing, so the app runs without a broker.
+  - `InMemoryPublisher` keeps events in a list. It is used in tests, and as the default until `RabbitMQPublisher` is added in step 7.
 - **Best effort**: if the broker is down, the failure is logged at ERROR and the HTTP request still succeeds. The DB is the source of truth, and events are notifications. A transactional outbox would guarantee delivery, and is listed as future work.
 - **Events**:
 

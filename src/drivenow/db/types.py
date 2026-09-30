@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime
 from sqlalchemy.engine import Dialect
 from sqlalchemy.types import TypeDecorator
 
-
-def to_utc(value: datetime) -> datetime:
-    """Return ``value`` as an aware UTC datetime; naive values are taken to be UTC (D7)."""
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+from drivenow.domain.timeutil import to_utc
 
 
 class UTCDateTime(TypeDecorator[datetime]):

@@ -12,6 +12,7 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 
 from drivenow.db.models import ONGOING_RENTAL_INDEX, Car, Rental
 from drivenow.domain.enums import CarStatus
+from drivenow.domain.exceptions import DataIntegrityError
 
 from .conftest import T0
 
@@ -89,7 +90,7 @@ def test_second_ongoing_rental_for_same_car_is_rejected(uow, add_car, add_rental
     car = add_car()
     first = add_rental(car.id, customer_name="First")
 
-    with pytest.raises(IntegrityError), uow() as tx:
+    with pytest.raises(DataIntegrityError), uow() as tx:
         tx.rentals.add(Rental(car_id=car.id, customer_name="Second", start_date=T0))
         tx.commit()
 
@@ -103,7 +104,7 @@ def test_second_ongoing_rental_for_same_car_is_rejected(uow, add_car, add_rental
 
 def test_end_date_before_start_date_is_rejected(uow, add_car):
     car = add_car()
-    with pytest.raises(IntegrityError), uow() as tx:
+    with pytest.raises(DataIntegrityError), uow() as tx:
         tx.rentals.add(
             Rental(
                 car_id=car.id,
@@ -126,7 +127,7 @@ def test_end_date_equal_to_start_date_is_allowed(add_car, add_rental):
 
 def test_rental_for_unknown_car_is_rejected(uow):
     # Proves PRAGMA foreign_keys is on for SQLite.
-    with pytest.raises(IntegrityError), uow() as tx:
+    with pytest.raises(DataIntegrityError), uow() as tx:
         tx.rentals.add(Rental(car_id=12345, customer_name="Dana", start_date=T0))
 
 
@@ -153,7 +154,7 @@ def test_deleting_car_with_rentals_is_rejected_by_database(uow, add_car, add_ren
     car = add_car()
     add_rental(car.id, start_date=T0 - timedelta(days=2), end_date=T0 - timedelta(days=1))
 
-    with pytest.raises(IntegrityError), uow() as tx:
+    with pytest.raises(DataIntegrityError), uow() as tx:
         tx.cars.delete(tx.cars.get(car.id))
         tx.commit()
 
@@ -249,7 +250,7 @@ def test_dates_are_stored_and_returned_as_aware_utc(uow, add_car, add_rental):
 def test_end_before_start_detected_across_time_zones(uow, add_car):
     # 10:00+03:00 is 07:00 UTC, which is before a 08:00 UTC start.
     car = add_car()
-    with pytest.raises(IntegrityError), uow() as tx:
+    with pytest.raises(DataIntegrityError), uow() as tx:
         tx.rentals.add(
             Rental(
                 car_id=car.id,

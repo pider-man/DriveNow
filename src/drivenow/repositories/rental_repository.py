@@ -6,6 +6,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from drivenow.db.models import Rental
+from drivenow.repositories.errors import integrity_errors_translated
 
 
 class SqlAlchemyRentalRepository:
@@ -16,7 +17,8 @@ class SqlAlchemyRentalRepository:
 
     def add(self, rental: Rental) -> Rental:
         self._session.add(rental)
-        self._session.flush()
+        with integrity_errors_translated():
+            self._session.flush()
         return rental
 
     def get(self, rental_id: int, *, for_update: bool = False) -> Rental | None:

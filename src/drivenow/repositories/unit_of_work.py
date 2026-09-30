@@ -8,6 +8,7 @@ from typing import Self
 from sqlalchemy.orm import Session, sessionmaker
 
 from drivenow.repositories.car_repository import SqlAlchemyCarRepository
+from drivenow.repositories.errors import integrity_errors_translated
 from drivenow.repositories.rental_repository import SqlAlchemyRentalRepository
 
 
@@ -50,7 +51,8 @@ class SqlAlchemyUnitOfWork:
             self._session = None
 
     def commit(self) -> None:
-        self._require_session().commit()
+        with integrity_errors_translated():
+            self._require_session().commit()
 
     def rollback(self) -> None:
         self._require_session().rollback()

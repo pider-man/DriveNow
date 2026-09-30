@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from drivenow.db.models import Car
 from drivenow.domain.enums import CarStatus
+from drivenow.repositories.errors import integrity_errors_translated
 
 
 class SqlAlchemyCarRepository:
@@ -17,7 +18,8 @@ class SqlAlchemyCarRepository:
 
     def add(self, car: Car) -> Car:
         self._session.add(car)
-        self._session.flush()
+        with integrity_errors_translated():
+            self._session.flush()
         return car
 
     def get(self, car_id: int, *, for_update: bool = False) -> Car | None:
@@ -34,7 +36,8 @@ class SqlAlchemyCarRepository:
 
     def delete(self, car: Car) -> None:
         self._session.delete(car)
-        self._session.flush()
+        with integrity_errors_translated():
+            self._session.flush()
 
     def count_active(self) -> int:
         stmt = select(func.count()).select_from(Car).where(Car.status != CarStatus.UNDER_MAINTENANCE)
