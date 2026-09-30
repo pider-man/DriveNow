@@ -6,6 +6,7 @@ in-memory fakes instead.
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import TracebackType
 from typing import Protocol, Self
 
@@ -54,6 +55,10 @@ class RentalRepository(Protocol):
 
     def get_ongoing_for_car(self, car_id: int) -> Rental | None:
         """Return the car's rental with no end date, if any."""
+        ...
+
+    def get_latest_end_for_car(self, car_id: int) -> datetime | None:
+        """Return the latest end date among the car's finished rentals, if any (B10)."""
         ...
 
     def delete_finished_for_car(self, car_id: int) -> int:

@@ -90,6 +90,7 @@ The PDF states only that ending a rental updates the car's status; the rules bel
 | B7 | A rental can't be ended twice, and its end date can't be before its start date | Proposed |
 | B8 | Model and customer name are required; year is a realistic car year | Proposed |
 | B9 | Deleting a car also deletes its finished rental history | Proposed, see open decisions |
+| B10 | A rental can't start before the end of the car's most recent rental | Added 2026-09-30, after the step 4 review |
 
 ## Non-functional requirements
 
@@ -156,7 +157,7 @@ We build in 10 steps in Claude Code on your machine. Each step ends with a commi
 | 1 | Architecture design: `docs/ARCHITECTURE.md` (layers, folders, diagram, DB choice, API endpoints) and `CLAUDE.md` working rules. No code | You approve the design |
 | 2 | Project skeleton: package layout, `pyproject.toml`/requirements, settings, pytest set up | `pip install -e .` and `pytest` run |
 | 3 | Data layer: ORM models for `cars` and `rentals`, DB session, repositories, tests | Tests pass; schema matches the PRD |
-| 4 | Business logic: car and rental services enforcing B1 to B9, unit tests | Tests pass; rules match the PRD |
+| 4 | Business logic: car and rental services enforcing B1 to B10, unit tests | Tests pass; rules match the PRD |
 | 5 | REST API: FastAPI endpoints for F1 to F7, error mapping, API tests | Try every endpoint in Swagger at `/docs` |
 | 6 | Logging (console + file) and Prometheus metrics | Log file written; `/metrics` shows active cars, ongoing rentals, response time |
 | 7 | Message queue: RabbitMQ publisher and worker | Events appear in the worker log |

@@ -12,6 +12,7 @@ from drivenow.domain.events import RENTAL_ENDED, RENTAL_STARTED, DomainEvent
 from drivenow.domain.exceptions import (
     DATE_IN_FUTURE,
     END_BEFORE_START,
+    START_BEFORE_PREVIOUS_END,
     CarNotAvailableError,
     CarNotFoundError,
     DataIntegrityError,
@@ -45,7 +46,8 @@ class RentalService:
     ) -> RentalRecord:
         """F4: rent an available car (B2, B3) and mark it in use (B1).
 
-        ``start_date`` defaults to now; a naive value is UTC; it can't be in the future.
+        ``start_date`` defaults to now; a naive value is UTC; it can't be in the
+        future, or before the end of the car's previous rental (B10).
         """
         customer_name = validate_text(customer_name, "customer_name", CUSTOMER_NAME_MAX_LENGTH)
         now = self._clock.now()
@@ -61,6 +63,14 @@ class RentalService:
                 raise CarNotAvailableError(f"Car {car_id} is {car.status.value} and can't be rented")
             if uow.rentals.get_ongoing_for_car(car_id) is not None:
                 raise CarNotAvailableError(f"Car {car_id} already has an ongoing rental")
+            previous_end = uow.rentals.get_latest_end_for_car(car_id)
+            if previous_end is not None and start < previous_end:
+                raise InvalidInputError(
+                    f"start_date can't be before the end of car {car_id}'s previous rental "
+                    f"({previous_end.isoformat()})",
+                    code=START_BEFORE_PREVIOUS_END,
+                    field="start_date",
+                )
             try:
                 rental = uow.rentals.add(
                     Rental(car_id=car_id, customer_name=customer_name, start_date=start, end_date=None)

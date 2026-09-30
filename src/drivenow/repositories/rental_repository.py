@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -40,6 +42,15 @@ class SqlAlchemyRentalRepository:
     def get_ongoing_for_car(self, car_id: int) -> Rental | None:
         stmt = select(Rental).where(Rental.car_id == car_id, Rental.end_date.is_(None))
         return self._session.scalars(stmt).one_or_none()
+
+    def get_latest_end_for_car(self, car_id: int) -> datetime | None:
+        stmt = (
+            select(Rental.end_date)
+            .where(Rental.car_id == car_id, Rental.end_date.is_not(None))
+            .order_by(Rental.end_date.desc())
+            .limit(1)
+        )
+        return self._session.scalar(stmt)
 
     def delete_finished_for_car(self, car_id: int) -> int:
         stmt = delete(Rental).where(Rental.car_id == car_id, Rental.end_date.is_not(None))

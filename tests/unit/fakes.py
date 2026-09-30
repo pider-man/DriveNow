@@ -111,6 +111,10 @@ class FakeRentalRepository:
     def get_ongoing_for_car(self, car_id: int) -> Rental | None:
         return next((r for r in self._db.rentals.values() if r.car_id == car_id and r.end_date is None), None)
 
+    def get_latest_end_for_car(self, car_id: int) -> datetime | None:
+        ends = [r.end_date for r in self._db.rentals.values() if r.car_id == car_id and r.end_date is not None]
+        return max(ends, default=None)
+
     def delete_finished_for_car(self, car_id: int) -> int:
         doomed = [rid for rid, r in self._db.rentals.items() if r.car_id == car_id and r.end_date is not None]
         for rid in doomed:

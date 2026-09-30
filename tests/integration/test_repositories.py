@@ -147,6 +147,21 @@ def test_list_rentals_filters_and_count_ongoing(uow, add_car, add_rental):
         assert tx.rentals.count_ongoing() == 2
 
 
+def test_get_latest_end_for_car(uow, add_car, add_rental):
+    car = add_car()
+    other = add_car(model="Other")
+    add_rental(car.id, start_date=T0 - timedelta(days=5), end_date=T0 - timedelta(days=4))
+    add_rental(car.id, start_date=T0 - timedelta(days=3), end_date=T0 - timedelta(days=2))
+    add_rental(car.id, start_date=T0)  # ongoing: ignored
+    add_rental(other.id, start_date=T0 - timedelta(days=1), end_date=T0 - timedelta(hours=1))
+
+    with uow() as tx:
+        latest = tx.rentals.get_latest_end_for_car(car.id)
+        assert latest == T0 - timedelta(days=2)
+        assert latest.tzinfo is not None
+        assert tx.rentals.get_latest_end_for_car(add_car(model="New").id) is None
+
+
 # --- Deleting cars (FK ON DELETE RESTRICT) ----------------------------------------
 
 

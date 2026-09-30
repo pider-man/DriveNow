@@ -138,6 +138,38 @@ def test_end_equal_to_start_allowed(rental_service, db):
     assert rental_service.end_rental(rental.id, end_date=start).end_date == start
 
 
+# --- B10: start not before the car's previous rental end ----------------------------
+
+
+def test_start_before_previous_end_rejected(rental_service, db, publisher):
+    car = db.seed_car()
+    db.seed_rental(car.id, start_date=NOW - timedelta(days=3), end_date=NOW - timedelta(days=2))
+    db.seed_rental(car.id, start_date=NOW - timedelta(hours=5), end_date=NOW - timedelta(hours=2))
+
+    with pytest.raises(InvalidInputError) as err:
+        rental_service.start_rental(car.id, "Dana", start_date=NOW - timedelta(hours=3))
+    assert err.value.code == "START_BEFORE_PREVIOUS_END"
+    assert err.value.field == "start_date"
+    assert len(db.rentals) == 2
+    assert db.cars[car.id].status == CarStatus.AVAILABLE
+    assert publisher.events == []
+
+
+def test_start_equal_to_previous_end_allowed(rental_service, db):
+    car = db.seed_car()
+    previous_end = NOW - timedelta(hours=2)
+    db.seed_rental(car.id, start_date=NOW - timedelta(hours=5), end_date=previous_end)
+    assert rental_service.start_rental(car.id, "Dana", start_date=previous_end).start_date == previous_end
+
+
+def test_previous_end_of_other_car_ignored(rental_service, db):
+    car = db.seed_car()
+    other = db.seed_car(model="Other")
+    db.seed_rental(other.id, start_date=NOW - timedelta(hours=5), end_date=NOW - timedelta(hours=1))
+    rental = rental_service.start_rental(car.id, "Dana", start_date=NOW - timedelta(hours=3))
+    assert rental.start_date == NOW - timedelta(hours=3)
+
+
 # --- B8: customer name required -----------------------------------------------------
 
 

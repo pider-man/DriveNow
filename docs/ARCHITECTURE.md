@@ -2,7 +2,7 @@
 
 Status: approved 2026-09-30 (build plan step 1) · Source of truth: [PRD.md](PRD.md)
 
-This document shows how the requirements in the PRD will be built. Where the two disagree, the PRD wins. The IDs used below (F1–F7, B1–B9, N1–N12, D1–D10) refer to the PRD's tables. The recommendations for D1–D10 and the rules B1–B9 are approved. The answers to the design questions are recorded in [Decisions](#13-decisions).
+This document shows how the requirements in the PRD will be built. Where the two disagree, the PRD wins. The IDs used below (F1–F7, B1–B9, N1–N12, D1–D10) refer to the PRD's tables. The recommendations for D1–D10 and the rules B1–B10 are approved. The answers to the design questions are recorded in [Decisions](#13-decisions).
 
 ## 1. Overview and technology stack
 
@@ -32,7 +32,7 @@ The code is split into three layers (N1), plus two cross-cutting modules. Depend
 | Layer | Package | Responsible for | Must not |
 | --- | --- | --- | --- |
 | API (interface) | `drivenow.api` | HTTP routing, request/response schemas (Pydantic), shape validation, dependency wiring, mapping domain errors to HTTP status codes | contain business rules, or import ORM models or sessions |
-| Services (business logic) | `drivenow.services` | All business rules B1–B9, transaction boundaries (via Unit of Work), logging critical actions, publishing domain events after commit, fleet statistics for `/stats` and the gauges | import FastAPI, or build SQL queries |
+| Services (business logic) | `drivenow.services` | All business rules B1–B10, transaction boundaries (via Unit of Work), logging critical actions, publishing domain events after commit, fleet statistics for `/stats` and the gauges | import FastAPI, or build SQL queries |
 | Data access | `drivenow.db`, `drivenow.repositories` | ORM models, engine and session factory, repository implementations, Unit of Work, DB constraints | enforce business rules (constraints act only as a safety net) |
 | Domain (shared) | `drivenow.domain` | `CarStatus` enum, domain exceptions, domain event definitions, plain data objects the services return | depend on anything else in the project |
 | Observability | `drivenow.observability` | Logging configuration, Prometheus metrics, request-timing middleware | contain business logic |
@@ -61,6 +61,7 @@ class RentalRepository(Protocol):
     def get(self, rental_id: int, *, for_update: bool = False) -> Rental | None: ...
     def list(self, car_id: int | None = None, ongoing: bool | None = None) -> list[Rental]: ...
     def get_ongoing_for_car(self, car_id: int) -> Rental | None: ...
+    def get_latest_end_for_car(self, car_id: int) -> datetime | None: ...   # B10
     def delete_finished_for_car(self, car_id: int) -> int: ...
     def count_ongoing(self) -> int: ...
 
@@ -319,7 +320,7 @@ JSON in and out. Timestamps are ISO 8601 in UTC (for example `2026-10-01T09:30:0
 | F3 | `GET /cars?status={status}` | optional `status` query parameter | `200` Car[] (ordered by id) | `422 VALIDATION_ERROR` (unknown status) |
 | F6 | `DELETE /cars/{car_id}` | none | `204` no body | `404 CAR_NOT_FOUND`; `409 CAR_RENTED` (B5) |
 | F7 | `GET /cars/{car_id}` | none | `200` Car | `404 CAR_NOT_FOUND` |
-| F4 | `POST /rentals` | `{ "car_id": int, "customer_name": str, "start_date"?: datetime }` | `201` Rental | `404 CAR_NOT_FOUND`; `409 CAR_NOT_AVAILABLE` (B2/B3); `422 VALIDATION_ERROR`, `DATE_IN_FUTURE` |
+| F4 | `POST /rentals` | `{ "car_id": int, "customer_name": str, "start_date"?: datetime }` | `201` Rental | `404 CAR_NOT_FOUND`; `409 CAR_NOT_AVAILABLE` (B2/B3); `422 VALIDATION_ERROR`, `DATE_IN_FUTURE`, `START_BEFORE_PREVIOUS_END` (B10) |
 | F5 | `POST /rentals/{rental_id}/end` | optional body `{ "end_date"?: datetime }` | `200` Rental (with `end_date` set) | `404 RENTAL_NOT_FOUND`; `409 RENTAL_ALREADY_ENDED` (B7); `422 DATE_IN_FUTURE`, `END_BEFORE_START` (B7) |
 | F7 | `GET /rentals?car_id={id}&ongoing={bool}` | both filters optional | `200` Rental[] (ordered by id) | `422 VALIDATION_ERROR` |
 | F7 | `GET /rentals/{rental_id}` | none | `200` Rental | `404 RENTAL_NOT_FOUND` |
@@ -335,7 +336,7 @@ Supporting endpoints (not in the PRD's list):
 
 F5 is a `POST` action on the rental, not `PATCH /rentals/{id}`, because ending a rental is a command with side effects on the car (B1), not a field edit.
 
-**Dates (D7, B7).** `start_date` and `end_date` are optional in the requests and default to the server clock (UTC). Staff can supply an earlier time to record a rental that started or ended in the past. A supplied datetime without a timezone is accepted and treated as UTC (reviewers type plain times in Swagger). One with an offset is converted to UTC. A time in the future returns `422 DATE_IN_FUTURE`, and an end before the start returns `422 END_BEFORE_START`.
+**Dates (D7, B7).** `start_date` and `end_date` are optional in the requests and default to the server clock (UTC). Staff can supply an earlier time to record a rental that started or ended in the past. A supplied datetime without a timezone is accepted and treated as UTC (reviewers type plain times in Swagger). One with an offset is converted to UTC. A time in the future returns `422 DATE_IN_FUTURE`, and an end before the start returns `422 END_BEFORE_START`. A start before the end of the car's most recent rental returns `422 START_BEFORE_PREVIOUS_END` (B10).
 
 ### Error mapping (`api/errors.py`)
 
@@ -343,10 +344,10 @@ F5 is a `POST` action on the rental, not `PATCH /rentals/{id}`, because ending a
 | --- | --- | --- |
 | `NotFoundError` | 404 | `CAR_NOT_FOUND`, `RENTAL_NOT_FOUND` |
 | `BusinessRuleViolation` | 409 | `CAR_NOT_AVAILABLE`, `CAR_RENTED`, `RENTAL_ALREADY_ENDED` |
-| `InvalidInputError` (service-level validation) and FastAPI `RequestValidationError` | 422 | `VALIDATION_ERROR` (the message lists the fields), `DATE_IN_FUTURE`, `END_BEFORE_START` |
+| `InvalidInputError` (service-level validation) and FastAPI `RequestValidationError` | 422 | `VALIDATION_ERROR` (the message lists the fields), `DATE_IN_FUTURE`, `END_BEFORE_START`, `START_BEFORE_PREVIOUS_END` |
 | any other exception | 500 | `INTERNAL_ERROR` (logged at ERROR with the stack trace, no details leaked) |
 
-## 8. Business rule enforcement (B1–B9)
+## 8. Business rule enforcement (B1–B10)
 
 Every rule lives in the service layer, so it holds for any interface. The API schemas reject bad input early for better messages, and the DB constraints catch anything that slips through.
 
@@ -361,6 +362,7 @@ Every rule lives in the service layer, so it holds for any interface. The API sc
 | B7 no double end; end ≥ start; no future times | `RentalService.start_rental` rejects `start_date > clock.now()`. `RentalService.end_rental` loads the rental `for_update=True`, raises `RentalAlreadyEndedError` if `end_date` is set, uses the given `end_date` or `clock.now()`, and requires `start_date ≤ end_date ≤ clock.now()` | Pydantic parses datetimes; naive values are treated as UTC | `ck_rentals_end_after_start` |
 | B8 model and customer name required; realistic year | `CarService` / `RentalService` validate (strip, non-blank; `1886 ≤ year ≤ current_year + 1`) | Pydantic: `min_length=1`, stripped strings, year bounds | `NOT NULL`, `ck_cars_year_positive` |
 | B9 deleting a car deletes its finished history (D6) | `CarService.delete_car`: after the B5 check, `rentals.delete_finished_for_car` and then `cars.delete`, in one Unit of Work | none | FK `RESTRICT` ensures the order is explicit |
+| B10 start not before the car's previous rental end | `RentalService.start_rental`: after the B2/B3 checks, with the car row locked, rejects `start_date < rentals.get_latest_end_for_car(car_id)` as `422 START_BEFORE_PREVIOUS_END`; a start equal to that end is allowed | none | none (the car lock serializes starts per car) |
 
 State transitions for `car.status` that the services allow:
 
@@ -435,7 +437,7 @@ The gauges are computed from the database at scrape time, not kept as counters i
 
 | Level | Scope | Tools |
 | --- | --- | --- |
-| Unit | `CarService`, `RentalService`: every rule B1–B9, with an in-memory fake UoW, a fixed `Clock` and a recording publisher | pytest |
+| Unit | `CarService`, `RentalService`: every rule B1–B10, with an in-memory fake UoW, a fixed `Clock` and a recording publisher | pytest |
 | Integration | Repositories, UoW, constraints (partial unique index, CHECK, FK) against SQLite in-memory | pytest + SQLAlchemy |
 | API | Every endpoint, status code and error body; `/metrics` contains all four metrics; `/stats` returns the right counts | FastAPI `TestClient` with a dependency override to a SQLite test DB |
 | Messaging | Event serialization, and that publisher failure doesn't fail the service | pytest with a mocked `pika` channel |
@@ -446,7 +448,7 @@ The tests never need Docker, PostgreSQL or RabbitMQ. `pytest` must pass before e
 
 The open questions from the step 1 review were answered on 2026-09-30. The sections above already reflect these answers.
 
-1. **Approval.** All D1–D10 recommendations and business rules B1–B9 are approved as written in the PRD.
+1. **Approval.** All D1–D10 recommendations and business rules B1–B9 are approved as written in the PRD. B10 was added later (Decision 15).
 2. **B5 scope.** A rented car's `model` and `year` can still be corrected. Only a status change and deletion are blocked while it is rented.
 3. **Dates (B7, D7).** `start_date` and `end_date` default to the server clock (UTC). `POST /rentals` and `POST /rentals/{id}/end` each accept an optional time, so staff can record a rental that started or ended earlier. Future times are rejected (`422 DATE_IN_FUTURE`), and so is an end before the start (`422 END_BEFORE_START`). A time without a timezone is accepted and treated as UTC, and a time with an offset is converted to UTC.
 4. **Realistic year (B8).** 1886 up to the current year + 1.
@@ -460,3 +462,4 @@ The open questions from the step 1 review were answered on 2026-09-30. The secti
 12. **D10 prototype.** Ignored. There is no prototype to consult.
 13. **Tests per step.** Step 1 was documentation only and has no tests. Every step from step 2 onward includes tests.
 14. **`/stats` before any traffic.** `avg_response_time_ms` is `null` until the first request has been measured.
+15. **Rule B10 (added after the step 4 review).** When a rental starts, its start time can't be earlier than the end of the car's most recent rental, so backdated rentals can't overlap the car's history. This is a validation error: `422 START_BEFORE_PREVIOUS_END`. A start equal to the previous end is allowed. It is recorded in the PRD's business rules.
