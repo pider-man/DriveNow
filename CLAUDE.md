@@ -39,4 +39,14 @@
 
 ## Commands
 
-The commands will be filled in as the steps add them (install, run, test, docker compose).
+Run from the repo root. The virtual environment `.venv/` is gitignored.
+
+```bash
+python -m venv .venv                          # Python 3.12+
+.venv/Scripts/python -m pip install -e ".[dev]"   # Windows; use .venv/bin/python on Linux/macOS
+.venv/Scripts/python -m pytest                # all tests
+```
+
+Settings come from environment variables or `.env` (see `.env.example` and `src/drivenow/config.py`).
+
+The run and docker compose commands will be added in the steps that create them.
