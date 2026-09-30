@@ -1,8 +1,8 @@
 # DriveNow Car Rental System: Architecture
 
-Status: draft for review (build plan step 1) · Source of truth: [PRD.md](PRD.md)
+Status: approved 2026-09-30 (build plan step 1) · Source of truth: [PRD.md](PRD.md)
 
-This document shows how the requirements in the PRD will be built. Where the two disagree, the PRD wins. The IDs used below (F1–F7, B1–B9, N1–N12, D1–D10) refer to the PRD's tables. The design treats the recommendations for D1–D10 and the rules B1–B9 as approved. See [Open questions](#13-open-questions).
+This document shows how the requirements in the PRD will be built. Where the two disagree, the PRD wins. The IDs used below (F1–F7, B1–B9, N1–N12, D1–D10) refer to the PRD's tables. The recommendations for D1–D10 and the rules B1–B9 are approved. The answers to the design questions are recorded in [Decisions](#13-decisions).
 
 ## 1. Overview and technology stack
 
@@ -10,7 +10,7 @@ DriveNow is a single Python service with a REST interface, plus a small backgrou
 
 | Concern | Choice | PRD reference |
 | --- | --- | --- |
-| Language | Python 3.12 | N8 |
+| Language | Python 3.12+ (Docker image 3.12; also developed and tested on 3.14) | N8 |
 | Interface | REST API with FastAPI (Swagger UI at `/docs`) | D1 |
 | Validation / DTOs | Pydantic v2 | N2 |
 | Configuration | pydantic-settings (environment variables, `.env`) | N8, N10 |
@@ -32,7 +32,7 @@ The code is split into three layers (N1), plus two cross-cutting modules. Depend
 | Layer | Package | Responsible for | Must not |
 | --- | --- | --- | --- |
 | API (interface) | `drivenow.api` | HTTP routing, request/response schemas (Pydantic), shape validation, dependency wiring, mapping domain errors to HTTP status codes | contain business rules, or import ORM models or sessions |
-| Services (business logic) | `drivenow.services` | All business rules B1–B9, transaction boundaries (via Unit of Work), logging critical actions, publishing domain events after commit | import FastAPI, or build SQL queries |
+| Services (business logic) | `drivenow.services` | All business rules B1–B9, transaction boundaries (via Unit of Work), logging critical actions, publishing domain events after commit, fleet statistics for `/stats` and the gauges | import FastAPI, or build SQL queries |
 | Data access | `drivenow.db`, `drivenow.repositories` | ORM models, engine and session factory, repository implementations, Unit of Work, DB constraints | enforce business rules (constraints act only as a safety net) |
 | Domain (shared) | `drivenow.domain` | `CarStatus` enum, domain exceptions, domain event definitions, plain data objects the services return | depend on anything else in the project |
 | Observability | `drivenow.observability` | Logging configuration, Prometheus metrics, request-timing middleware | contain business logic |
@@ -94,6 +94,7 @@ flowchart LR
         subgraph svc["Service layer"]
             carsvc["CarService"]
             rentsvc["RentalService"]
+            statsvc["StatsService"]
         end
         subgraph dal["Data access layer"]
             uow["SqlAlchemyUnitOfWork"]
@@ -130,8 +131,12 @@ flowchart LR
     rentsvc -->|after commit| pub
     pub -->|JSON event| mq --> worker --> wlog
     mw -->|request duration| metrics
-    prom -->|GET /metrics| routers
-    metrics -.->|gauges read counts at scrape time| repos
+    carsvc -->|operation duration| metrics
+    rentsvc -->|operation duration| metrics
+    prom -->|GET /metrics, GET /stats| routers
+    routers --> statsvc
+    statsvc --> uow
+    metrics -.->|gauges read counts at scrape time| statsvc
 ```
 
 ### Request flow: register a rental (F4)
@@ -150,10 +155,11 @@ sequenceDiagram
     participant Q as RabbitMQ
     participant W as Worker
 
-    C->>M: POST /rentals {car_id, customer_name}
+    C->>M: POST /rentals {car_id, customer_name, start_date?}
     M->>R: forward, start timer
     R->>R: validate body with Pydantic (B8)
-    R->>S: start_rental(car_id, customer_name)
+    R->>S: start_rental(car_id, customer_name, start_date)
+    S->>S: start_date defaults to clock.now(), reject if in the future (B7)
     S->>U: cars.get(car_id, for_update=True)
     U->>D: SELECT ... FOR UPDATE
     alt car missing
@@ -164,7 +170,7 @@ sequenceDiagram
         S-->>R: CarNotAvailableError
         R-->>C: 409
     else ok
-        S->>U: rentals.add(start_date = clock.now())
+        S->>U: rentals.add(start_date)
         S->>U: car.status = in_use (B1)
         S->>U: commit()
         U->>D: INSERT rental, UPDATE car, COMMIT
@@ -176,7 +182,8 @@ sequenceDiagram
         S-->>R: Rental
         R-->>C: 201 Rental JSON
     end
-    M->>M: observe duration in histogram
+    S->>S: observe operation duration (start_rental)
+    M->>M: observe request duration
 ```
 
 ## 4. Folder and module structure
@@ -212,7 +219,8 @@ sequenceDiagram
 │   ├── services/
 │   │   ├── clock.py              # Clock protocol, SystemClock (UTC)
 │   │   ├── car_service.py        # CarService (F1, F2, F3, F6, F7)
-│   │   └── rental_service.py     # RentalService (F4, F5, F7)
+│   │   ├── rental_service.py     # RentalService (F4, F5, F7)
+│   │   └── stats_service.py      # StatsService: active cars, ongoing rentals
 │   ├── api/
 │   │   ├── app.py                # FastAPI app, routers, middleware, exception handlers
 │   │   ├── dependencies.py       # composition root: UoW, services, publisher
@@ -221,10 +229,10 @@ sequenceDiagram
 │   │   └── routers/
 │   │       ├── cars.py
 │   │       ├── rentals.py
-│   │       └── system.py         # /health, /metrics
+│   │       └── system.py         # /health, /metrics, /stats
 │   ├── observability/
 │   │   ├── logging_config.py     # setup_logging(): console + rotating file
-│   │   ├── metrics.py            # gauges + histogram definitions
+│   │   ├── metrics.py            # gauges, histograms, track_operation decorator
 │   │   └── middleware.py         # request timing middleware
 │   └── messaging/
 │       ├── publisher.py          # EventPublisher protocol, NullPublisher, RabbitMQPublisher
@@ -242,7 +250,7 @@ sequenceDiagram
 - **SQLite for standalone runs** (N8). With no server to install, `pip install -e .` followed by `python -m drivenow` just works. SQLite is also used for the fast test suite. It supports the same foreign keys (enabled with `PRAGMA foreign_keys=ON`), partial unique index and CHECK constraint. It serializes writers, so `FOR UPDATE` isn't needed there (SQLAlchemy omits it).
 - **SQLAlchemy 2.0** is the ORM (N3). It is the most widely used Python ORM, and its typed `Mapped[]` declarative models work unchanged on both engines. It fits the repository and Unit of Work patterns. It keeps the ORM out of the API layer, where SQLModel would blur the line between the API schema and the table model.
 - Only `DATABASE_URL` changes between the two setups: `sqlite:///./drivenow.db` by default, and `postgresql+psycopg://drivenow:drivenow@postgres:5432/drivenow` in compose.
-- **Schema creation**: `Base.metadata.create_all()` runs at startup. This is idempotent and enough for two tables. Alembic can be added later (see open questions).
+- **Schema creation**: `Base.metadata.create_all()` runs at startup. This is idempotent and enough for two tables. Alembic is listed as future work (Decision 9).
 
 ## 6. ORM schema
 
@@ -305,8 +313,8 @@ JSON in and out. Timestamps are ISO 8601 in UTC (for example `2026-10-01T09:30:0
 | F3 | `GET /cars?status={status}` | optional `status` query parameter | `200` Car[] (ordered by id) | `422 VALIDATION_ERROR` (unknown status) |
 | F6 | `DELETE /cars/{car_id}` | none | `204` no body | `404 CAR_NOT_FOUND`; `409 CAR_RENTED` (B5) |
 | F7 | `GET /cars/{car_id}` | none | `200` Car | `404 CAR_NOT_FOUND` |
-| F4 | `POST /rentals` | `{ "car_id": int, "customer_name": str }` | `201` Rental | `404 CAR_NOT_FOUND`; `409 CAR_NOT_AVAILABLE` (B2/B3); `422 VALIDATION_ERROR` |
-| F5 | `POST /rentals/{rental_id}/end` | none | `200` Rental (with `end_date` set) | `404 RENTAL_NOT_FOUND`; `409 RENTAL_ALREADY_ENDED` (B7) |
+| F4 | `POST /rentals` | `{ "car_id": int, "customer_name": str, "start_date"?: datetime }` | `201` Rental | `404 CAR_NOT_FOUND`; `409 CAR_NOT_AVAILABLE` (B2/B3); `422 VALIDATION_ERROR`, `DATE_IN_FUTURE` |
+| F5 | `POST /rentals/{rental_id}/end` | optional body `{ "end_date"?: datetime }` | `200` Rental (with `end_date` set) | `404 RENTAL_NOT_FOUND`; `409 RENTAL_ALREADY_ENDED` (B7); `422 DATE_IN_FUTURE`, `END_BEFORE_START` (B7) |
 | F7 | `GET /rentals?car_id={id}&ongoing={bool}` | both filters optional | `200` Rental[] (ordered by id) | `422 VALIDATION_ERROR` |
 | F7 | `GET /rentals/{rental_id}` | none | `200` Rental | `404 RENTAL_NOT_FOUND` |
 
@@ -315,10 +323,13 @@ Supporting endpoints (not in the PRD's list):
 | Method and path | Purpose |
 | --- | --- |
 | `GET /metrics` | Prometheus text format (N6) |
+| `GET /stats` | `200 { "active_cars": int, "ongoing_rentals": int, "avg_response_time_ms": float \| null }`, the key metrics as JSON so they can be read without Prometheus (`null` until a request has been measured) |
 | `GET /health` | `200 {"status": "ok"}` after a `SELECT 1`, used by the docker-compose healthcheck |
 | `GET /docs` | Swagger UI (D1) |
 
-F5 is a `POST` action on the rental, not `PATCH /rentals/{id}`, because ending a rental is a command with side effects on the car (B1), not a field edit. The server sets the start and end dates from the clock (see open questions).
+F5 is a `POST` action on the rental, not `PATCH /rentals/{id}`, because ending a rental is a command with side effects on the car (B1), not a field edit.
+
+**Dates (D7, B7).** `start_date` and `end_date` are optional in the requests and default to the server clock (UTC). Staff can supply an earlier time to record a rental that started or ended in the past. Supplied datetimes must include a timezone (a naive datetime returns 422), and they are converted to UTC. A time in the future returns `422 DATE_IN_FUTURE`, and an end before the start returns `422 END_BEFORE_START`.
 
 ### Error mapping (`api/errors.py`)
 
@@ -326,7 +337,7 @@ F5 is a `POST` action on the rental, not `PATCH /rentals/{id}`, because ending a
 | --- | --- | --- |
 | `NotFoundError` | 404 | `CAR_NOT_FOUND`, `RENTAL_NOT_FOUND` |
 | `BusinessRuleViolation` | 409 | `CAR_NOT_AVAILABLE`, `CAR_RENTED`, `RENTAL_ALREADY_ENDED` |
-| `InvalidInputError` (service-level validation) and FastAPI `RequestValidationError` | 422 | `VALIDATION_ERROR`, where the message lists the fields |
+| `InvalidInputError` (service-level validation) and FastAPI `RequestValidationError` | 422 | `VALIDATION_ERROR` (the message lists the fields), `DATE_IN_FUTURE`, `END_BEFORE_START` |
 | any other exception | 500 | `INTERNAL_ERROR` (logged at ERROR with the stack trace, no details leaked) |
 
 ## 8. Business rule enforcement (B1–B9)
@@ -341,7 +352,7 @@ Every rule lives in the service layer, so it holds for any interface. The API sc
 | B4 `in_use` only through rentals | `CarService.create_car` / `update_car` reject `status == in_use` | `CarCreate` / `CarUpdate` schemas allow only `available` / `under_maintenance` | none |
 | B5 a rented car's status can't change and it can't be deleted | `CarService.update_car` (when `status` is in the payload) and `delete_car` raise `CarRentedError` when the car has an ongoing rental | none | FK `RESTRICT` blocks deleting a car that has rentals |
 | B6 new car is `available` or `under_maintenance` | `CarService.create_car` defaults to `available` | `CarCreate.status` default and allowed values | column default |
-| B7 no double end; end ≥ start | `RentalService.end_rental` loads the rental `for_update=True`, raises `RentalAlreadyEndedError` if `end_date` is set, and sets `end_date = clock.now()`, which is checked to be ≥ `start_date` | none | `ck_rentals_end_after_start` |
+| B7 no double end; end ≥ start; no future times | `RentalService.start_rental` rejects `start_date > clock.now()`. `RentalService.end_rental` loads the rental `for_update=True`, raises `RentalAlreadyEndedError` if `end_date` is set, uses the given `end_date` or `clock.now()`, and requires `start_date ≤ end_date ≤ clock.now()` | Pydantic requires timezone-aware datetimes | `ck_rentals_end_after_start` |
 | B8 model and customer name required; realistic year | `CarService` / `RentalService` validate (strip, non-blank; `1886 ≤ year ≤ current_year + 1`) | Pydantic: `min_length=1`, stripped strings, year bounds | `NOT NULL`, `ck_cars_year_positive` |
 | B9 deleting a car deletes its finished history (D6) | `CarService.delete_car`: after the B5 check, `rentals.delete_finished_for_car` and then `cars.delete`, in one Unit of Work | none | FK `RESTRICT` ensures the order is explicit |
 
@@ -382,13 +393,16 @@ stateDiagram-v2
 
 | Metric | Type | Meaning | How it's computed |
 | --- | --- | --- | --- |
-| `drivenow_active_cars` | Gauge | Cars **not under maintenance** (D5): `available` + `in_use` | `Gauge.set_function` runs `cars.count_active()` in a short read-only session at scrape time |
-| `drivenow_ongoing_rentals` | Gauge | Rentals with `end_date IS NULL` | `Gauge.set_function` runs `rentals.count_ongoing()` at scrape time |
-| `drivenow_request_duration_seconds` | Histogram, labels `method`, `route`, `status_code` | Request latency | Timing middleware uses `time.perf_counter()`. `route` is the route template (for example `/cars/{car_id}`), so labels stay bounded |
+| `drivenow_active_cars` | Gauge | Cars **not under maintenance** (D5): `available` + `in_use` | `Gauge.set_function` calls `StatsService.active_cars()` (a `cars.count_active()` query in a short read-only session) at scrape time |
+| `drivenow_ongoing_rentals` | Gauge | Rentals with `end_date IS NULL` | `Gauge.set_function` calls `StatsService.ongoing_rentals()` at scrape time |
+| `drivenow_request_duration_seconds` | Histogram, labels `method`, `route`, `status_code` | HTTP request latency | Timing middleware uses `time.perf_counter()`. `route` is the route template (for example `/cars/{car_id}`), so labels stay bounded |
+| `drivenow_operation_duration_seconds` | Histogram, label `operation` | Business operation latency, inside the service layer | The `@track_operation("<name>")` decorator on each service method. Operations: `add_car`, `update_car`, `delete_car`, `get_car`, `list_cars`, `start_rental`, `end_rental`, `get_rental`, `list_rentals`. Recorded on success and on failure |
 
-The average response time is `drivenow_request_duration_seconds_sum / drivenow_request_duration_seconds_count`, overall or per route. In PromQL it's `rate(..._sum[5m]) / rate(..._count[5m])`. The histogram buckets also give percentiles.
+The average response time is `drivenow_request_duration_seconds_sum / drivenow_request_duration_seconds_count`, overall or per route. The same applies to operations. In PromQL it's `rate(..._sum[5m]) / rate(..._count[5m])`. The histogram buckets also give percentiles.
 
-The gauges are computed from the database at scrape time, not kept as counters in memory. That keeps them correct across restarts, multiple uvicorn workers and direct DB changes. `/metrics` is excluded from the histogram so scrapes don't skew the average.
+The gauges are computed from the database at scrape time, not kept as counters in memory. That keeps them correct across restarts, multiple uvicorn workers and direct DB changes. `/metrics`, `/stats` and `/health` are excluded from the request histogram so monitoring calls don't skew the average.
+
+`GET /stats` gives the same numbers as JSON for reviewers who don't run Prometheus. `active_cars` and `ongoing_rentals` come from `StatsService`. `avg_response_time_ms` is the request histogram's total `_sum / _count × 1000` since process start, read from the registry, and is `null` before the first measured request. The router calls only `StatsService` and `observability.metrics`, never a repository.
 
 ## 11. Message queue (D4)
 
@@ -396,7 +410,7 @@ The gauges are computed from the database at scrape time, not kept as counters i
 - **Implementations**:
   - `RabbitMQPublisher` (when `RABBITMQ_URL` is set) uses `pika`. It declares a durable **topic** exchange `drivenow.events` and publishes persistent JSON messages with routing key = event name. A lock and lazy reconnect make it safe across FastAPI's thread pool.
   - `NullPublisher` (standalone default) does nothing, so the app runs without a broker.
-- **Best effort**: if the broker is down, the failure is logged at ERROR and the HTTP request still succeeds. The DB is the source of truth, and events are notifications.
+- **Best effort**: if the broker is down, the failure is logged at ERROR and the HTTP request still succeeds. The DB is the source of truth, and events are notifications. A transactional outbox would guarantee delivery, and is listed as future work.
 - **Events**:
 
   | Routing key | Payload |
@@ -416,25 +430,25 @@ The gauges are computed from the database at scrape time, not kept as counters i
 | --- | --- | --- |
 | Unit | `CarService`, `RentalService`: every rule B1–B9, with an in-memory fake UoW, a fixed `Clock` and a recording publisher | pytest |
 | Integration | Repositories, UoW, constraints (partial unique index, CHECK, FK) against SQLite in-memory | pytest + SQLAlchemy |
-| API | Every endpoint, status code and error body; `/metrics` contains the three metrics | FastAPI `TestClient` with a dependency override to a SQLite test DB |
+| API | Every endpoint, status code and error body; `/metrics` contains all four metrics; `/stats` returns the right counts | FastAPI `TestClient` with a dependency override to a SQLite test DB |
 | Messaging | Event serialization, and that publisher failure doesn't fail the service | pytest with a mocked `pika` channel |
 
 The tests never need Docker, PostgreSQL or RabbitMQ. `pytest` must pass before every commit (see `CLAUDE.md`).
 
-## 13. Open questions
+## 13. Decisions
 
-These points in the PRD are unclear or unspecified. The design above uses the stated default for each until you decide.
+The open questions from the step 1 review were answered on 2026-09-30. The sections above already reflect these answers.
 
-1. **Approval status of D1–D10 and B1–B9.** The PRD header says "Approved 2026-09-30", but the *Business rules* and *Open decisions* sections say each item "needs your OK" and that "none is settled until you confirm". *Default:* all recommendations and B1–B9 are accepted as written.
-2. **B5 scope.** "A rented car's status can't be changed." Can its `model` or `year` still be corrected while it's rented? *Default:* yes. Only status changes and deletion are blocked.
-3. **Dates (B7, D7).** Should `start_date` and `end_date` come from the client or from the server clock? *Default:* both from the server clock (UTC). This makes "end before start" impossible except through clock skew, and rules out back-dated or future rentals. Future rentals are out of scope anyway. Should staff be able to record a rental that began earlier?
-4. **"Realistic car year" (B8).** *Default:* 1886 (the first car) to current year + 1 (next model year).
-5. **Status spelling in the API.** The PRD writes "in use" and "under maintenance". *Default:* the identifiers `in_use` and `under_maintenance` in JSON, the DB and query strings.
-6. **ID type.** *Default:* integer auto-increment IDs, not UUIDs.
-7. **F7 rental listing.** *Default:* optional filters `car_id` and `ongoing`, with no pagination for any list. Are other filters (for example by customer name) or pagination wanted?
-8. **Average response time (N6).** Is a histogram (average = `_sum / _count`) enough? Or should `/metrics` also expose a ready-made average gauge, and should the service operations be timed separately from HTTP requests? *Default:* histogram only, at the HTTP level.
-9. **Schema migrations.** *Default:* `create_all` at startup, with no Alembic. That's enough for two fixed tables, but it won't handle later schema changes.
-10. **`/health` endpoint.** It isn't in the PRD, but the docker-compose healthcheck and startup ordering need it. *Default:* add it.
-11. **Queue delivery guarantee.** *Default:* best-effort publishing after commit, with no transactional outbox, so an event can be lost if the broker is down. Is that acceptable for an optional extra?
-12. **D10 prototype.** The PRD refers to an existing prototype to use as a reference, but none is in this repository. Is there one I should look at?
-13. **Tests in step 1.** `CLAUDE.md` requires tests in every step. Step 1 is documentation only, so it has none. The rule applies from step 2 onward.
+1. **Approval.** All D1–D10 recommendations and business rules B1–B9 are approved as written in the PRD.
+2. **B5 scope.** A rented car's `model` and `year` can still be corrected. Only a status change and deletion are blocked while it is rented.
+3. **Dates (B7, D7).** `start_date` and `end_date` default to the server clock (UTC). `POST /rentals` and `POST /rentals/{id}/end` each accept an optional time, so staff can record a rental that started or ended earlier. Future times are rejected (`422 DATE_IN_FUTURE`), and so is an end before the start (`422 END_BEFORE_START`).
+4. **Realistic year (B8).** 1886 up to the current year + 1.
+5. **Status values.** `available`, `in_use`, `under_maintenance` in JSON, the DB and query strings.
+6. **IDs.** Auto-increment integers.
+7. **Rental listing (F7).** Filters `car_id` and `ongoing`. No paging on any list. *README future work:* pagination.
+8. **Response time metrics (N6).** Keep the request histogram and add the per-operation histogram `drivenow_operation_duration_seconds`, since the PDF says "request/operation response time". Add `GET /stats`, which returns `active_cars`, `ongoing_rentals` and `avg_response_time_ms` as JSON, so a reviewer can see them without Prometheus.
+9. **Schema creation.** Tables are created at startup with `create_all`. *README future work:* Alembic migrations.
+10. **Health check.** Add `GET /health`.
+11. **Queue delivery.** Best-effort publishing after commit is acceptable for this scope, and failures are logged. *README future work:* a transactional outbox.
+12. **D10 prototype.** Ignored. There is no prototype to consult.
+13. **Tests per step.** Step 1 was documentation only and has no tests. Every step from step 2 onward includes tests.
