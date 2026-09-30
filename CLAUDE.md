@@ -45,8 +45,9 @@ Run from the repo root. The virtual environment `.venv/` is gitignored.
 python -m venv .venv                          # Python 3.12+
 .venv/Scripts/python -m pip install -e ".[dev]"   # Windows; use .venv/bin/python on Linux/macOS
 .venv/Scripts/python -m pytest                # all tests
+.venv/Scripts/python -m drivenow              # API on http://127.0.0.1:8000, Swagger at /docs
 ```
 
 Settings come from environment variables or `.env` (see `.env.example` and `src/drivenow/config.py`).
 
-The run and docker compose commands will be added in the steps that create them.
+The docker compose command will be added in step 8.

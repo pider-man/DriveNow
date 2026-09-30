@@ -202,7 +202,8 @@ sequenceDiagram
 │   └── ARCHITECTURE.md
 ├── src/drivenow/
 │   ├── __init__.py
-│   ├── main.py                   # create_app(); `python -m drivenow` runs uvicorn standalone
+│   ├── __main__.py               # `python -m drivenow`
+│   ├── main.py                   # main(): runs uvicorn with the create_app factory
 │   ├── config.py                 # Settings: DATABASE_URL, LOG_LEVEL, LOG_FILE, RABBITMQ_URL, ...
 │   ├── domain/
 │   │   ├── enums.py              # CarStatus
@@ -227,7 +228,7 @@ sequenceDiagram
 │   │   ├── rental_service.py     # RentalService (F4, F5, F7)
 │   │   └── stats_service.py      # StatsService: active cars, ongoing rentals
 │   ├── api/
-│   │   ├── app.py                # FastAPI app, routers, middleware, exception handlers
+│   │   ├── app.py                # create_app(settings): FastAPI app, routers, middleware, exception handlers
 │   │   ├── dependencies.py       # composition root: UoW, services, publisher
 │   │   ├── errors.py             # domain error -> HTTP mapping, error body
 │   │   ├── schemas.py            # CarCreate, CarUpdate, CarRead, RentalCreate, RentalRead, ErrorResponse
@@ -418,7 +419,7 @@ The gauges are computed from the database at scrape time, not kept as counters i
 - **Implementations**:
   - `RabbitMQPublisher` (when `RABBITMQ_URL` is set) uses `pika`. It declares a durable **topic** exchange `drivenow.events` and publishes persistent JSON messages with routing key = event name. A lock and lazy reconnect make it safe across FastAPI's thread pool.
   - `NullPublisher` (standalone default) does nothing, so the app runs without a broker.
-  - `InMemoryPublisher` keeps events in a list. It is used in tests, and as the default until `RabbitMQPublisher` is added in step 7.
+  - `InMemoryPublisher` keeps events in a list, for tests. The app uses `NullPublisher` until `RabbitMQPublisher` is added in step 7, because an in-memory list would only grow in a long-running server.
 - **Best effort**: if the broker is down, the failure is logged at ERROR and the HTTP request still succeeds. The DB is the source of truth, and events are notifications. A transactional outbox would guarantee delivery, and is listed as future work.
 - **Events**:
 
