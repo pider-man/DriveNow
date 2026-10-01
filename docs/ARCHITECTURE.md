@@ -27,14 +27,14 @@ The data access is synchronous on purpose. FastAPI runs sync endpoints in its th
 
 ## 2. Layers and responsibilities
 
-The code is split into three layers (N1), plus two cross-cutting modules. Dependencies point inward only: API → services → abstractions ← data access.
+The code is split into three layers (N1), plus two cross-cutting modules. The dependencies aren't purely inward. The SQLAlchemy models in `db/models.py` double as the domain entities, so the repository interfaces and the services use them directly: services import `Car`, `Rental` and the field length limits from `db/models.py`. What the repository Protocols (`repositories/interfaces.py`) still decouple is everything else about persistence. Services never see a session, a query or a transaction; they work through `UnitOfWork`, `CarRepository` and `RentalRepository`, and the SQLAlchemy implementations of those live in the data layer. The API layer never imports the data layer at all. Only its composition root (`api/dependencies.py`, plus `api/app.py`) wires the concrete classes, and `tests/test_architecture.py` enforces this boundary together with the others (for example, services never import FastAPI or SQLAlchemy).
 
 | Layer | Package | Responsible for | Must not |
 | --- | --- | --- | --- |
-| API (interface) | `drivenow.api` | HTTP routing, request/response schemas (Pydantic), shape validation, dependency wiring, mapping domain errors to HTTP status codes | contain business rules, or import ORM models or sessions |
+| API (interface) | `drivenow.api` | HTTP routing, request/response schemas (Pydantic), shape validation, dependency wiring, mapping domain errors to HTTP status codes | contain business rules, or import ORM models or sessions (only the composition root, `api/dependencies.py` and `api/app.py`, wires the data layer) |
 | Services (business logic) | `drivenow.services` | All business rules B1–B10, transaction boundaries (via Unit of Work), logging critical actions, publishing domain events after commit, fleet statistics for `/stats` and the gauges | import FastAPI, or build SQL queries |
 | Data access | `drivenow.db`, `drivenow.repositories` | ORM models, engine and session factory, repository implementations, Unit of Work, DB constraints | enforce business rules (constraints act only as a safety net) |
-| Domain (shared) | `drivenow.domain` | `CarStatus` enum, domain exceptions, domain event definitions, plain data objects the services return | depend on anything else in the project |
+| Domain (shared) | `drivenow.domain` | `CarStatus` enum, domain exceptions, domain event definitions, plain data objects the services return | depend on anything else in the project (the one exception: `domain/records.py` names the ORM models for type hints only, under `TYPE_CHECKING`, in `from_model()`) |
 | Observability | `drivenow.observability` | Logging configuration, Prometheus metrics, request-timing middleware | contain business logic |
 | Messaging | `drivenow.messaging` | Event publisher interface and implementations, RabbitMQ worker | be required for the API to work |
 
@@ -44,7 +44,7 @@ How SOLID applies (N2):
 - **Open/closed.** New event consumers or publishers (for example Kafka) plug in through the `EventPublisher` interface without changing the services. New error types map to HTTP through one table in `api/errors.py`.
 - **Liskov substitution.** Every implementation of `CarRepository`, `RentalRepository`, `UnitOfWork`, `EventPublisher` and `Clock` can replace another. This is what lets the unit tests use in-memory fakes.
 - **Interface segregation.** The repository interfaces are small and split per aggregate (`CarRepository`, `RentalRepository`), not one generic DAO.
-- **Dependency inversion.** Services depend on `typing.Protocol` abstractions defined in `repositories/interfaces.py`, `messaging/publisher.py` and `services/clock.py`. The concrete objects are wired in `api/dependencies.py`, the composition root.
+- **Dependency inversion.** For persistence mechanics, publishing, time and metrics, services depend on `typing.Protocol` abstractions: `repositories/interfaces.py`, `messaging/publisher.py`, `services/clock.py` and `observability/tracking.py`. The concrete objects are wired in `api/dependencies.py`, the composition root. The exception is the entities: services use the SQLAlchemy model classes from `db/models.py` directly as domain objects, rather than through a separate domain model.
 
 ### Key abstractions
 

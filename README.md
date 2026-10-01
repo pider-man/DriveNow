@@ -147,7 +147,7 @@ sequenceDiagram
 
 | Layer | Package | Responsibility |
 | --- | --- | --- |
-| API (interface) | `drivenow.api` | HTTP only: routes, Pydantic request and response models, and mapping domain errors to HTTP status codes. It contains no business rules and never touches the ORM. |
+| API (interface) | `drivenow.api` | HTTP only: routes, Pydantic request and response models, and mapping domain errors to HTTP status codes. It contains no business rules, and only its composition root wires the data layer. |
 | Services (business logic) | `drivenow.services` | Every business rule B1–B10, transaction boundaries, logging critical actions, publishing events after commit. It never imports FastAPI or SQLAlchemy. |
 | Data access | `drivenow.db`, `drivenow.repositories` | ORM models, engine and session, repositories, and the Unit of Work. Database constraints act as a safety net for the rules. |
 | Domain | `drivenow.domain` | Car status enum, typed errors with stable codes, events, and the plain records the services return. |
@@ -161,7 +161,7 @@ These boundaries aren't just a convention. [`tests/test_architecture.py`](tests/
 - **Open/closed**: a new transport (for example Kafka) is a new `EventPublisher` implementation, with no service changes. A new error type maps to HTTP through one table in `api/errors.py`.
 - **Liskov substitution**: any `UnitOfWork`, `EventPublisher`, `Clock` or `OperationRecorder` implementation can stand in for another. The unit tests run the real services against in-memory fakes and a fixed clock.
 - **Interface segregation**: small protocols per concern (`CarRepository`, `RentalRepository`, `EventPublisher`, `Clock`, `OperationRecorder`), not one large DAO.
-- **Dependency inversion**: services depend on `typing.Protocol` abstractions. The concrete SQLAlchemy, RabbitMQ and Prometheus objects are wired in one composition root, [`api/dependencies.py`](src/drivenow/api/dependencies.py). Even metrics are injected: `@track_operation` never imports Prometheus.
+- **Dependency inversion**: for persistence, publishing, time and metrics, services depend on `typing.Protocol` abstractions. The concrete repositories, RabbitMQ publisher and Prometheus metrics are wired in one composition root, [`api/dependencies.py`](src/drivenow/api/dependencies.py). Even metrics are injected: `@track_operation` never imports Prometheus. The one deliberate shortcut is the entities: the SQLAlchemy models in `db/models.py` double as domain objects, so services use those classes directly. They still never touch a session or a query.
 
 ### Database choice
 
