@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-7s [%(name)s] %(message)s"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+# ISO 8601 in UTC, e.g. 2026-10-01T17:39:00.123Z, matching the times in the API and messages.
+LOG_FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-7s [%(name)s] %(message)s"
+DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 MAX_BYTES = 5 * 1024 * 1024
 BACKUP_COUNT = 3
 
@@ -31,6 +33,7 @@ def setup_logging(level: str = "INFO", log_file: str = "logs/drivenow.log") -> N
     path.parent.mkdir(parents=True, exist_ok=True)
 
     formatter = logging.Formatter(LOG_FORMAT, DATE_FORMAT)
+    formatter.converter = time.gmtime  # UTC timestamps
     console = logging.StreamHandler(sys.stdout)
     file_handler = RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8")
 

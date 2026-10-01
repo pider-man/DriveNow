@@ -46,6 +46,7 @@ python -m venv .venv                          # Python 3.12+
 .venv/Scripts/python -m pip install -e ".[dev]"   # Windows; use .venv/bin/python on Linux/macOS
 .venv/Scripts/python -m pytest                # all tests
 .venv/Scripts/python -m drivenow              # API on http://127.0.0.1:8000, Swagger at /docs
+.venv/Scripts/python -m drivenow.worker       # RabbitMQ audit worker (needs RABBITMQ_URL)
 ```
 
 Settings come from environment variables or `.env` (see `.env.example` and `src/drivenow/config.py`).

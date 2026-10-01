@@ -14,7 +14,8 @@ from sqlalchemy import Engine, text
 
 from drivenow.config import Settings
 from drivenow.db.session import create_db_engine, create_session_factory
-from drivenow.messaging.publisher import EventPublisher
+from drivenow.messaging.publisher import EventPublisher, NullPublisher
+from drivenow.messaging.rabbitmq import RabbitMQPublisher
 from drivenow.observability.metrics import AppMetrics
 from drivenow.repositories.unit_of_work import SqlAlchemyUnitOfWork
 from drivenow.services.car_service import CarService
@@ -35,6 +36,13 @@ class Container:
     rental_service: RentalService
     stats_service: StatsService
     health_check: HealthCheck
+
+
+def build_publisher(settings: Settings) -> EventPublisher:
+    """RabbitMQ when ``RABBITMQ_URL`` is set, otherwise a publisher that drops events."""
+    if settings.rabbitmq_url:
+        return RabbitMQPublisher(settings.rabbitmq_url)
+    return NullPublisher()
 
 
 def build_container(settings: Settings, clock: Clock, publisher: EventPublisher) -> Container:

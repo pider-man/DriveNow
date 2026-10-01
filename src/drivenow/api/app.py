@@ -10,12 +10,12 @@ from fastapi import FastAPI
 from sqlalchemy.engine import make_url
 
 from drivenow import __version__
-from drivenow.api.dependencies import build_container
+from drivenow.api.dependencies import build_container, build_publisher
 from drivenow.api.errors import register_error_handlers
 from drivenow.api.routers import cars, rentals, system
 from drivenow.config import Settings, get_settings
 from drivenow.db.session import create_tables
-from drivenow.messaging.publisher import EventPublisher, NullPublisher
+from drivenow.messaging.publisher import EventPublisher
 from drivenow.observability.logging_config import setup_logging
 from drivenow.observability.middleware import RequestMetricsMiddleware
 from drivenow.services.clock import Clock, SystemClock
@@ -42,10 +42,10 @@ def create_app(
     """Build the app: wire services, routers and error handlers.
 
     ``clock`` and ``publisher`` can be injected (tests); by default the system
-    clock and a no-op publisher are used (RabbitMQ is added in build step 7).
+    clock is used, and RabbitMQ when ``RABBITMQ_URL`` is set (else a no-op publisher).
     """
     settings = settings or get_settings()
-    container = build_container(settings, clock or SystemClock(), publisher or NullPublisher())
+    container = build_container(settings, clock or SystemClock(), publisher or build_publisher(settings))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -59,6 +59,9 @@ def create_app(
         )
         yield
         logger.info("DriveNow API stopping")
+        close_publisher = getattr(container.publisher, "close", None)
+        if close_publisher is not None:
+            close_publisher()
         container.engine.dispose()
 
     app = FastAPI(title="DriveNow Car Rental API", version=__version__, description=DESCRIPTION, lifespan=lifespan)

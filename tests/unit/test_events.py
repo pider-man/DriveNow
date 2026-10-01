@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from uuid import UUID
 
 import pytest
 
@@ -59,7 +60,20 @@ def test_event_payloads(car_service, rental_service, publisher):
 
 def test_event_message_shape():
     event = DomainEvent(name="car.created", occurred_at=NOW, payload={"id": 1})
-    assert event.to_message() == {"event": "car.created", "occurred_at": NOW.isoformat(), "payload": {"id": 1}}
+    assert event.to_message() == {
+        "id": event.id,
+        "type": "car.created",
+        "occurred_at": NOW.isoformat(),
+        "payload": {"id": 1},
+    }
+    assert str(UUID(event.id)) == event.id
+
+
+def test_each_event_gets_a_unique_id(car_service, publisher):
+    car = car_service.add_car("Toyota Corolla", 2022)
+    car_service.update_car(car.id, year=2023)
+    ids = [e.id for e in publisher.events]
+    assert len(ids) == len(set(ids)) == 2
 
 
 def test_rejected_operation_publishes_nothing(rental_service, db, publisher):

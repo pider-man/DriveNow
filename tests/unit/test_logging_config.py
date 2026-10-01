@@ -11,7 +11,7 @@ import pytest
 
 from drivenow.observability.logging_config import reset_logging, setup_logging
 
-LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} (INFO|WARNING|ERROR) +\[[\w.]+\] .+$")
+LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z (INFO|WARNING|ERROR) +\[[\w.]+\] .+$")
 
 
 @pytest.fixture(autouse=True)

@@ -241,9 +241,11 @@ sequenceDiagram
 │   │   ├── metrics.py            # AppMetrics: per-app registry, histograms, counter, gauges
 │   │   ├── middleware.py         # request timing middleware (route templates)
 │   │   └── tracking.py           # OperationRecorder protocol + @track_operation decorator
-│   └── messaging/
-│       ├── publisher.py          # EventPublisher protocol, NullPublisher, InMemoryPublisher, RabbitMQPublisher
-│       └── worker.py             # `python -m drivenow.messaging.worker`
+│   ├── messaging/
+│   │   ├── publisher.py          # EventPublisher protocol, NullPublisher, InMemoryPublisher
+│   │   ├── rabbitmq.py           # RabbitMQPublisher, exchange declaration
+│   │   └── worker.py             # audit worker: handle_message, run (reconnect loop)
+│   └── worker.py                 # `python -m drivenow.worker`
 └── tests/
     ├── conftest.py               # SQLite in-memory engine, fakes, TestClient fixtures
     ├── unit/                     # services with in-memory fake UoW/publisher/clock
@@ -386,7 +388,7 @@ stateDiagram-v2
 - Handlers: a `StreamHandler` (stdout) and a `RotatingFileHandler` (`LOG_FILE`, default `logs/drivenow.log`, 5 MB × 3 backups). The directory is created if it's missing. The worker defaults to `logs/worker.log`.
 - It is idempotent: it marks its own handlers and replaces them on every call, so calling it twice never duplicates output, and handlers it didn't add (such as pytest's capture) are left alone.
 - uvicorn's loggers (`uvicorn`, `uvicorn.error`, `uvicorn.access`) lose their own handlers and propagate to the root, so server and access lines share the same format, console and file. `main()` passes `log_config=None` to uvicorn.
-- Format: `2026-10-01 12:00:00.123 INFO    [drivenow.services.car_service] Car added: ...` (`%(asctime)s.%(msecs)03d %(levelname)-7s [%(name)s] %(message)s`). Level: `LOG_LEVEL` (default `INFO`).
+- Format: `2026-10-01T12:00:00.123Z INFO    [drivenow.services.car_service] Car added: ...` (`%(asctime)s.%(msecs)03dZ %(levelname)-7s [%(name)s] %(message)s`). Timestamps are ISO 8601 in **UTC**, like every other time in the system. Level: `LOG_LEVEL` (default `INFO`).
 - Each module uses `logging.getLogger(__name__)`.
 
 | Event | Level | Logged by |
@@ -424,10 +426,10 @@ The gauges are computed from the database at scrape time, not kept as counters i
 
 - **Interface**: `EventPublisher.publish(event: DomainEvent)`. Services call it **after** a successful commit, so no event describes a change that was rolled back.
 - **Implementations**:
-  - `RabbitMQPublisher` (when `RABBITMQ_URL` is set) uses `pika`. It declares a durable **topic** exchange `drivenow.events` and publishes persistent JSON messages with routing key = event name. A lock and lazy reconnect make it safe across FastAPI's thread pool.
-  - `NullPublisher` (standalone default) does nothing, so the app runs without a broker.
-  - `InMemoryPublisher` keeps events in a list, for tests. The app uses `NullPublisher` until `RabbitMQPublisher` is added in step 7, because an in-memory list would only grow in a long-running server.
-- **Best effort**: if the broker is down, the failure is logged at ERROR and the HTTP request still succeeds. The DB is the source of truth, and events are notifications. A transactional outbox would guarantee delivery, and is listed as future work.
+  - `RabbitMQPublisher` (`messaging/rabbitmq.py`, used when `RABBITMQ_URL` is set) uses `pika`. It declares a durable **topic** exchange `drivenow.events` and publishes persistent JSON messages (`delivery_mode=2`, `message_id` = event id, `type` = event type) with routing key = event type. Publisher confirms are on. A pika connection isn't thread-safe, so a lock serializes all use of one lazily opened connection across FastAPI's thread pool. Short socket timeouts keep a dead broker from stalling requests. The app closes it on shutdown.
+  - `NullPublisher` (used when `RABBITMQ_URL` isn't set) does nothing, so the app runs without a broker.
+  - `InMemoryPublisher` keeps events in a list, for tests.
+- **Best effort**: on a failure the publisher drops the connection, reconnects **once** and retries. If that fails too, it logs an ERROR and the HTTP request still succeeds. The DB is the source of truth, and events are notifications. A transactional outbox would guarantee delivery, and is listed as future work.
 - **Events**:
 
   | Routing key | Payload |
@@ -438,8 +440,8 @@ The gauges are computed from the database at scrape time, not kept as counters i
   | `rental.started` | Rental |
   | `rental.ended` | Rental |
 
-  Message body: `{"event": "rental.started", "occurred_at": "2026-10-01T09:30:00Z", "payload": {...}}`.
-- **Worker** (`python -m drivenow.messaging.worker`, its own compose service): it declares durable queue `drivenow.audit`, binds it with `#`, consumes with manual acks, logs each event through the shared logging config and acks. It retries the connection with backoff at startup while RabbitMQ is still booting. The worker's job is kept small on purpose, as an audit or notification hook. It shows asynchronous decoupling without moving any business rule out of the API.
+  Message body: `{"id": "<uuid>", "type": "rental.started", "occurred_at": "2026-10-01T09:30:00+00:00", "payload": {...}}`.
+- **Worker** (`python -m drivenow.worker`, its own compose service, logging to `WORKER_LOG_FILE`): it declares the exchange and the durable queue `drivenow.audit`, binds it with `#` (all events), and consumes with manual acks and `prefetch_count=10`. Each event is logged as an audit line, `AUDIT rental.started id=... occurred_at=... payload={...}`, and then acked. A malformed message is logged at ERROR and rejected without requeue, so it can't loop forever. If the broker is unreachable or goes away, the worker reconnects with backoff (1, 2, 4 ... 30 s). The worker's job is kept small on purpose, as an audit or notification hook. It shows asynchronous decoupling without moving any business rule out of the API.
 
 ## 12. Testing strategy (N7)
 
