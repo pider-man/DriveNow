@@ -47,7 +47,7 @@ def test_critical_actions_reach_console_and_log_file(app, log_file, capsys):
         "publisher=InMemoryPublisher",
         "INFO    [drivenow.services.car_service] Car added: id=1 model='Toyota Corolla' year=2022 status=available",
         "INFO    [drivenow.services.car_service] Car updated: id=1 changed=year",
-        "INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 customer='Dana Levi'",
+        "INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 start=",
         "WARNING [drivenow.services.rental_service] start_rental rejected: CAR_NOT_AVAILABLE",
         "INFO    [drivenow.services.rental_service] Rental ended: id=1 car_id=1",
         "INFO    [drivenow.services.car_service] Car deleted: id=1 deleted_rentals=1",
@@ -59,6 +59,7 @@ def test_critical_actions_reach_console_and_log_file(app, log_file, capsys):
         assert fragment in file_text, fragment
         assert fragment in console_text, fragment
     assert "Traceback (most recent call last)" in file_text
+    assert "Dana Levi" not in file_text  # customer names stay out of the logs
     assert "RuntimeError: boom" in file_text
 
 

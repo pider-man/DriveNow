@@ -31,7 +31,7 @@
 - src layout: `src/drivenow/...`, tests in `tests/{unit,integration,api}`.
 - Respect the layer boundaries in `docs/ARCHITECTURE.md`:
   - `api` never imports ORM models or sessions, and contains no business rules.
-  - `services` never import FastAPI, and depend only on the Protocols in `repositories/interfaces.py`, `messaging/publisher.py` and `services/clock.py`.
+  - `services` never import FastAPI or SQLAlchemy. They use the ORM models in `db/models.py` as their entities, and reach everything else through Protocols: `repositories/interfaces.py` keeps them away from sessions, queries and transactions, and `messaging/publisher.py`, `services/clock.py` and `observability/tracking.py` cover publishing, time and metrics.
   - Business rules B1–B10 live in the services. DB constraints are only a safety net.
 - Type hints everywhere, docstrings on public classes and functions, and `logging.getLogger(__name__)` (never `print`).
 - Datetimes are timezone-aware UTC.

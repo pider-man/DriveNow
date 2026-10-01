@@ -90,8 +90,8 @@ class RentalService:
             record = RentalRecord.from_model(rental)
 
         logger.info(
-            "Rental started: id=%s car_id=%s customer=%r start=%s",
-            record.id, record.car_id, record.customer_name, record.start_date.isoformat(),
+            "Rental started: id=%s car_id=%s start=%s",  # no customer name: keep personal data out of logs
+            record.id, record.car_id, record.start_date.isoformat(),
         )
         self._publish(RENTAL_STARTED, record.to_payload())
         return record
@@ -110,7 +110,17 @@ class RentalService:
             raise InvalidInputError("end_date can't be in the future", code=DATE_IN_FUTURE, field="end_date")
 
         with self._uow_factory() as uow:
-            rental = uow.rentals.get(rental_id, for_update=True)
+            # Lock order: always the car first, then the rental (as in start_rental and
+            # delete_car), so concurrent operations on the same car can't deadlock.
+            current = uow.rentals.get(rental_id)  # unlocked read, only to find the car
+            if current is None:
+                raise RentalNotFoundError(rental_id)
+            car = uow.cars.get(current.car_id, for_update=True)
+            if car is None:
+                # The foreign key makes this impossible, so the data is corrupt: fail loudly
+                # (an unexpected error: 500, logged with its stack trace).
+                raise RuntimeError(f"Rental {rental_id} refers to missing car {current.car_id}")
+            rental = uow.rentals.get(rental_id, for_update=True)  # re-read under the lock
             if rental is None:
                 raise RentalNotFoundError(rental_id)
             if rental.end_date is not None:
@@ -119,10 +129,8 @@ class RentalService:
                 raise InvalidInputError(
                     "end_date can't be before start_date", code=END_BEFORE_START, field="end_date"
                 )
-            car = uow.cars.get(rental.car_id, for_update=True)
             rental.end_date = end
-            if car is not None:
-                car.status = CarStatus.AVAILABLE
+            car.status = CarStatus.AVAILABLE
             uow.commit()
             record = RentalRecord.from_model(rental)
 

@@ -23,6 +23,9 @@ BINDING_KEY = "#"  # all events
 PREFETCH = 10
 MAX_BACKOFF_SECONDS = 30
 
+# Personal data kept out of the audit log. The events themselves are not changed.
+LOG_EXCLUDED_FIELDS = frozenset({"customer_name"})
+
 
 def handle_message(channel: Any, method: Any, properties: Any, body: bytes) -> None:
     """Log one event as an audit line and acknowledge it.
@@ -43,9 +46,16 @@ def handle_message(channel: Any, method: Any, properties: Any, body: bytes) -> N
 
     logger.info(
         "AUDIT %s id=%s occurred_at=%s payload=%s",
-        event_type, event_id, occurred_at, json.dumps(payload, sort_keys=True),
+        event_type, event_id, occurred_at, json.dumps(_loggable(payload), sort_keys=True),
     )
     channel.basic_ack(delivery_tag=method.delivery_tag)
+
+
+def _loggable(payload: Any) -> Any:
+    """The payload as it may be logged: without the fields in LOG_EXCLUDED_FIELDS."""
+    if isinstance(payload, dict):
+        return {key: value for key, value in payload.items() if key not in LOG_EXCLUDED_FIELDS}
+    return payload
 
 
 def consume(connection: Any) -> None:

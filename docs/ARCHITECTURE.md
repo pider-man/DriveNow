@@ -27,14 +27,14 @@ The data access is synchronous on purpose. FastAPI runs sync endpoints in its th
 
 ## 2. Layers and responsibilities
 
-The code is split into three layers (N1), plus two cross-cutting modules. Dependencies point inward only: API → services → abstractions ← data access.
+The code is split into three layers (N1), plus two cross-cutting modules. The dependencies aren't purely inward. The SQLAlchemy models in `db/models.py` double as the domain entities, so the repository interfaces and the services use them directly: services import `Car`, `Rental` and the field length limits from `db/models.py`. What the repository Protocols (`repositories/interfaces.py`) still decouple is everything else about persistence. Services never see a session, a query or a transaction; they work through `UnitOfWork`, `CarRepository` and `RentalRepository`, and the SQLAlchemy implementations of those live in the data layer. The API layer never imports the data layer at all. Only its composition root (`api/dependencies.py`, plus `api/app.py`) wires the concrete classes, and `tests/test_architecture.py` enforces this boundary together with the others (for example, services never import FastAPI or SQLAlchemy).
 
 | Layer | Package | Responsible for | Must not |
 | --- | --- | --- | --- |
-| API (interface) | `drivenow.api` | HTTP routing, request/response schemas (Pydantic), shape validation, dependency wiring, mapping domain errors to HTTP status codes | contain business rules, or import ORM models or sessions |
+| API (interface) | `drivenow.api` | HTTP routing, request/response schemas (Pydantic), shape validation, dependency wiring, mapping domain errors to HTTP status codes | contain business rules, or import ORM models or sessions (only the composition root, `api/dependencies.py` and `api/app.py`, wires the data layer) |
 | Services (business logic) | `drivenow.services` | All business rules B1–B10, transaction boundaries (via Unit of Work), logging critical actions, publishing domain events after commit, fleet statistics for `/stats` and the gauges | import FastAPI, or build SQL queries |
 | Data access | `drivenow.db`, `drivenow.repositories` | ORM models, engine and session factory, repository implementations, Unit of Work, DB constraints | enforce business rules (constraints act only as a safety net) |
-| Domain (shared) | `drivenow.domain` | `CarStatus` enum, domain exceptions, domain event definitions, plain data objects the services return | depend on anything else in the project |
+| Domain (shared) | `drivenow.domain` | `CarStatus` enum, domain exceptions, domain event definitions, plain data objects the services return | depend on anything else in the project (the one exception: `domain/records.py` names the ORM models for type hints only, under `TYPE_CHECKING`, in `from_model()`) |
 | Observability | `drivenow.observability` | Logging configuration, Prometheus metrics, request-timing middleware | contain business logic |
 | Messaging | `drivenow.messaging` | Event publisher interface and implementations, RabbitMQ worker | be required for the API to work |
 
@@ -44,7 +44,7 @@ How SOLID applies (N2):
 - **Open/closed.** New event consumers or publishers (for example Kafka) plug in through the `EventPublisher` interface without changing the services. New error types map to HTTP through one table in `api/errors.py`.
 - **Liskov substitution.** Every implementation of `CarRepository`, `RentalRepository`, `UnitOfWork`, `EventPublisher` and `Clock` can replace another. This is what lets the unit tests use in-memory fakes.
 - **Interface segregation.** The repository interfaces are small and split per aggregate (`CarRepository`, `RentalRepository`), not one generic DAO.
-- **Dependency inversion.** Services depend on `typing.Protocol` abstractions defined in `repositories/interfaces.py`, `messaging/publisher.py` and `services/clock.py`. The concrete objects are wired in `api/dependencies.py`, the composition root.
+- **Dependency inversion.** For persistence mechanics, publishing, time and metrics, services depend on `typing.Protocol` abstractions: `repositories/interfaces.py`, `messaging/publisher.py`, `services/clock.py` and `observability/tracking.py`. The concrete objects are wired in `api/dependencies.py`, the composition root. The exception is the entities: services use the SQLAlchemy model classes from `db/models.py` directly as domain objects, rather than through a separate domain model.
 
 ### Key abstractions
 
@@ -401,7 +401,7 @@ stateDiagram-v2
 | Event | Level | Logged by |
 | --- | --- | --- |
 | Car added / updated / deleted (with id and changed fields) | INFO | `CarService` |
-| Rental started / ended (rental id, car id, customer) | INFO | `RentalService` |
+| Rental started / ended (rental id, car id, start or end time; no customer name) | INFO | `RentalService` |
 | Business rule rejected (for example rent an unavailable car) | WARNING | services, before raising |
 | Request validation rejected (422 from FastAPI) | WARNING | `api/errors.py` |
 | Unhandled exception | ERROR with stack trace | global exception handler in `api/errors.py` |
@@ -448,7 +448,7 @@ The gauges are computed from the database at scrape time, not kept as counters i
   | `rental.ended` | Rental |
 
   Message body: `{"id": "<uuid>", "type": "rental.started", "occurred_at": "2026-10-01T09:30:00+00:00", "payload": {...}}`.
-- **Worker** (`python -m drivenow.worker`, its own compose service, logging to `WORKER_LOG_FILE`): it declares the exchange and the durable queue `drivenow.audit`, binds it with `#` (all events), and consumes with manual acks and `prefetch_count=10`. Each event is logged as an audit line, `AUDIT rental.started id=... occurred_at=... payload={...}`, and then acked. A malformed message is logged at ERROR and rejected without requeue, so it can't loop forever. If the broker is unreachable or goes away, the worker reconnects with backoff (1, 2, 4 ... 30 s). The worker's job is kept small on purpose, as an audit or notification hook. It shows asynchronous decoupling without moving any business rule out of the API.
+- **Worker** (`python -m drivenow.worker`, its own compose service, logging to `WORKER_LOG_FILE`): it declares the exchange and the durable queue `drivenow.audit`, binds it with `#` (all events), and consumes with manual acks and `prefetch_count=10`. Each event is logged as an audit line, `AUDIT rental.started id=... occurred_at=... payload={...}`, and then acked. The logged payload leaves out `customer_name`, so personal data stays out of the logs; the message itself is unchanged. A malformed message is logged at ERROR and rejected without requeue, so it can't loop forever. If the broker is unreachable or goes away, the worker reconnects with backoff (1, 2, 4 ... 30 s). The worker's job is kept small on purpose, as an audit or notification hook. It shows asynchronous decoupling without moving any business rule out of the API.
 
 ## 12. Testing strategy (N7)
 

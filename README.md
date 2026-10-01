@@ -7,7 +7,7 @@ A Python service that manages the DriveNow fleet: add, update, list and delete c
 - **Observability**: console and rotating-file logs in UTC, `/metrics` for Prometheus, and `/stats` as plain JSON.
 - **Message queue**: events such as `rental.started` go to RabbitMQ, and a worker writes an audit line for each one.
 - **Runs two ways**: `docker compose up` (PostgreSQL, RabbitMQ, API, worker, Prometheus), or standalone Python on SQLite with no broker.
-- **209 tests**, which pass on both SQLite and PostgreSQL.
+- **213 tests**, which pass on both SQLite and PostgreSQL.
 
 The approved spec is [docs/PRD.md](docs/PRD.md), and the full design is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -26,6 +26,7 @@ The approved spec is [docs/PRD.md](docs/PRD.md), and the full design is [docs/AR
 - [Business rules](#business-rules)
 - [Requirements checklist](#requirements-checklist)
 - [Future work](#future-work)
+- [How this was built](#how-this-was-built)
 - [Screenshots](#screenshots)
 - [Project layout](#project-layout)
 
@@ -147,7 +148,7 @@ sequenceDiagram
 
 | Layer | Package | Responsibility |
 | --- | --- | --- |
-| API (interface) | `drivenow.api` | HTTP only: routes, Pydantic request and response models, and mapping domain errors to HTTP status codes. It contains no business rules and never touches the ORM. |
+| API (interface) | `drivenow.api` | HTTP only: routes, Pydantic request and response models, and mapping domain errors to HTTP status codes. It contains no business rules, and only its composition root wires the data layer. |
 | Services (business logic) | `drivenow.services` | Every business rule B1–B10, transaction boundaries, logging critical actions, publishing events after commit. It never imports FastAPI or SQLAlchemy. |
 | Data access | `drivenow.db`, `drivenow.repositories` | ORM models, engine and session, repositories, and the Unit of Work. Database constraints act as a safety net for the rules. |
 | Domain | `drivenow.domain` | Car status enum, typed errors with stable codes, events, and the plain records the services return. |
@@ -161,7 +162,7 @@ These boundaries aren't just a convention. [`tests/test_architecture.py`](tests/
 - **Open/closed**: a new transport (for example Kafka) is a new `EventPublisher` implementation, with no service changes. A new error type maps to HTTP through one table in `api/errors.py`.
 - **Liskov substitution**: any `UnitOfWork`, `EventPublisher`, `Clock` or `OperationRecorder` implementation can stand in for another. The unit tests run the real services against in-memory fakes and a fixed clock.
 - **Interface segregation**: small protocols per concern (`CarRepository`, `RentalRepository`, `EventPublisher`, `Clock`, `OperationRecorder`), not one large DAO.
-- **Dependency inversion**: services depend on `typing.Protocol` abstractions. The concrete SQLAlchemy, RabbitMQ and Prometheus objects are wired in one composition root, [`api/dependencies.py`](src/drivenow/api/dependencies.py). Even metrics are injected: `@track_operation` never imports Prometheus.
+- **Dependency inversion**: for persistence, publishing, time and metrics, services depend on `typing.Protocol` abstractions. The concrete repositories, RabbitMQ publisher and Prometheus metrics are wired in one composition root, [`api/dependencies.py`](src/drivenow/api/dependencies.py). Even metrics are injected: `@track_operation` never imports Prometheus. The one deliberate shortcut is the entities: the SQLAlchemy models in `db/models.py` double as domain objects, so services use those classes directly. They still never touch a session or a query.
 
 ### Database choice
 
@@ -373,7 +374,7 @@ Python's built-in `logging` writes to **both the console and a rotating file** (
 
 ```
 2026-10-01T18:17:59.001Z INFO    [drivenow.services.car_service] Car added: id=1 model='Toyota Corolla' year=2022 status=available
-2026-10-01T18:17:59.135Z INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 customer='Dana Levi' start=2026-10-01T18:17:59.128771+00:00
+2026-10-01T18:17:59.135Z INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 start=2026-10-01T18:17:59.128771+00:00
 2026-10-01T18:17:59.166Z WARNING [drivenow.services.rental_service] start_rental rejected: CAR_NOT_AVAILABLE: Car 1 is in_use and can't be rented
 2026-10-01T18:17:59.197Z INFO    [drivenow.services.rental_service] Rental ended: id=1 car_id=1 end=2026-10-01T18:17:59.193388+00:00
 2026-10-01T18:17:59.229Z INFO    [drivenow.services.car_service] Car updated: id=3 changed=status model='Kia Picanto' year=2020 status=available
@@ -432,9 +433,9 @@ With Docker, Prometheus scrapes `api:8000/metrics` every 15 s. Open http://local
 - **Best effort.** If the broker is down, the publisher reconnects once. If that fails too, it logs an ERROR, and **the request still succeeds**, because the database is the source of truth.
 - **Worker.** The worker (`python -m drivenow.worker`) consumes the durable queue `drivenow.audit`, which is bound to all events (`#`). It writes an audit line for each one, then acknowledges it:
   ```
-  2026-10-01T18:06:15.453Z INFO    [drivenow.messaging.worker] AUDIT rental.started id=76767cc4-… occurred_at=2026-10-01T18:06:15.452956+00:00 payload={"car_id": 1, "customer_name": "Dana Levi", …}
+  2026-10-01T18:06:15.453Z INFO    [drivenow.messaging.worker] AUDIT rental.started id=76767cc4-… occurred_at=2026-10-01T18:06:15.452956+00:00 payload={"car_id": 1, "end_date": null, "id": 1, …}
   ```
-  A malformed message is rejected without requeueing. If the broker goes away, the worker reconnects, waiting 1, 2, 4 … up to 30 s between tries.
+  The audit line leaves out `customer_name`, so personal data stays out of the logs; the event itself still carries it. A malformed message is rejected without requeueing. If the broker goes away, the worker reconnects, waiting 1, 2, 4 … up to 30 s between tries.
 - **Without a broker.** When `RABBITMQ_URL` isn't set, events are simply dropped.
 
 ---
@@ -442,7 +443,7 @@ With Docker, Prometheus scrapes `api:8000/metrics` every 15 s. Open http://local
 ## Tests
 
 ```bash
-pytest                                   # 209 tests, in-memory SQLite, no Docker needed
+pytest                                   # 213 tests, in-memory SQLite, no Docker needed
 ```
 
 **The same suite on PostgreSQL.** Run it against the compose database `drivenow_test`, which Postgres creates on first start:
@@ -495,7 +496,7 @@ The PRD's acceptance checklist, with where each item is met:
 - [x] **Critical actions and errors are logged to the console and a file.** [Logging](#logging); `test_critical_actions_reach_console_and_log_file` in [`tests/api/test_observability_api.py`](tests/api/test_observability_api.py).
 - [x] **Metrics for active cars, ongoing rentals and average response time.** [Metrics](#metrics); `test_metrics_gauges_follow_the_database` and `test_stats_values_and_average_exclude_ops_endpoints`.
 - [x] **Separate data access, service and interface layers.** [Layers](#layers); [`tests/test_architecture.py`](tests/test_architecture.py).
-- [x] **At least 4 unit tests, all passing.** [Tests](#tests): 209 passing, on SQLite and on PostgreSQL.
+- [x] **At least 4 unit tests, all passing.** [Tests](#tests): 213 passing, on SQLite and on PostgreSQL.
 - [x] **Runs standalone, with documented install steps and dependency management.** [`pyproject.toml`](pyproject.toml) and [Run it (b)](#b-standalone-python-sqlite-no-broker).
 - [x] **`docker-compose up` starts the full system.** [`docker-compose.yml`](docker-compose.yml) and [Run it (a)](#a-everything-with-docker-compose).
 - [x] **Public repo, feature branch, clear commit messages.** All work is on `feature/vehicle-management`, with one descriptive commit per build step.
@@ -510,6 +511,16 @@ The PRD's acceptance checklist, with where each item is met:
 - **Alembic migrations.** Tables are currently created at startup with `create_all`, which is fine for two fixed tables but can't evolve a schema.
 - **A transactional outbox**, for guaranteed event delivery. Publishing is currently best effort: an event is lost if the broker is down at that moment, though the request still succeeds.
 - **Out of scope for this exercise**, per the PRD: authentication and roles, customers as their own entity, pricing and payments, reservations for future dates, and a web front end.
+
+---
+
+## How this was built
+
+I designed and reviewed this project step by step, with [Claude Code](https://claude.com/claude-code) as the coding assistant.
+
+- [`docs/PRD.md`](docs/PRD.md) is the plan we agreed on before any code was written: requirements, business rules, open decisions and a build plan.
+- [`CLAUDE.md`](CLAUDE.md) holds the working rules Claude Code followed. It built one step at a time and stopped for my review after each one. Tests had to pass before every commit, and nothing was pushed without my approval.
+- Each build step is one commit on `feature/vehicle-management`, so the history shows how the design in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) became code.
 
 ---
 

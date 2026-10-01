@@ -47,11 +47,34 @@ def test_end_rental_sets_car_available_in_one_commit(rental_service, db):
     assert ended.end_date == NOW and not ended.ongoing
     assert db.cars[car.id].status == CarStatus.AVAILABLE
     assert db.journal == [
-        f"lock:rental:{seeded.id}",
         f"lock:car:{car.id}",
+        f"lock:rental:{seeded.id}",
         "commit",
         "publish:rental.ended",
     ]
+
+
+def test_end_rental_with_missing_car_is_an_error(rental_service, db, publisher):
+    # A rental whose car is gone breaks an invariant the FK guarantees: not a client error.
+    car = db.seed_car(status=CarStatus.IN_USE)
+    seeded = db.seed_rental(car.id, start_date=NOW - timedelta(hours=2))
+    del db.cars[car.id]
+
+    with pytest.raises(RuntimeError, match=f"Rental {seeded.id} refers to missing car {car.id}"):
+        rental_service.end_rental(seeded.id)
+
+    assert db.rentals[seeded.id].end_date is None
+    assert "commit" not in db.journal
+    assert publisher.events == []
+
+
+def test_end_rental_locks_car_before_rental(rental_service, db):
+    # Same lock order as start_rental and delete_car (car first), so they can't deadlock.
+    car = db.seed_car(status=CarStatus.IN_USE)
+    seeded = db.seed_rental(car.id, start_date=NOW - timedelta(hours=2))
+    rental_service.end_rental(seeded.id)
+    locks = [entry for entry in db.journal if entry.startswith("lock:")]
+    assert locks == [f"lock:car:{car.id}", f"lock:rental:{seeded.id}"]
 
 
 # --- B2: only an available car can be rented ----------------------------------------
@@ -305,9 +328,10 @@ def test_logs_rental_actions_and_rejections(rental_service, db, caplog):
         rental_service.end_rental(rental.id)
 
     messages = [(r.levelname, r.getMessage()) for r in caplog.records]
+    assert not any("Dana Levi" in message for _, message in messages)  # no customer names in logs
     assert (
         "INFO",
-        f"Rental started: id={rental.id} car_id={car.id} customer='Dana Levi' start={NOW.isoformat()}",
+        f"Rental started: id={rental.id} car_id={car.id} start={NOW.isoformat()}",
     ) in messages
     assert ("INFO", f"Rental ended: id={rental.id} car_id={car.id} end={NOW.isoformat()}") in messages
     assert (

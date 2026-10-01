@@ -26,7 +26,9 @@ class SqlAlchemyRentalRepository:
     def get(self, rental_id: int, *, for_update: bool = False) -> Rental | None:
         stmt = select(Rental).where(Rental.id == rental_id)
         if for_update:
-            stmt = stmt.with_for_update()
+            # Lock the row, and reload it even if this session already holds a
+            # (possibly stale) copy, so checks made under the lock see current data.
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return self._session.scalars(stmt).one_or_none()
 
     def list(self, car_id: int | None = None, ongoing: bool | None = None) -> list[Rental]:
