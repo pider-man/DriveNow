@@ -99,8 +99,8 @@ class RentalRead(BaseModel):
 
 
 class ErrorDetail(BaseModel):
-    code: str = Field(examples=["CAR_NOT_AVAILABLE"])
-    message: str = Field(examples=["Car 1 is in_use and can't be rented"])
+    code: str = Field(description="Stable error code, e.g. CAR_NOT_FOUND or VALIDATION_ERROR.")
+    message: str = Field(description="Human-readable explanation.")
 
 
 class ErrorResponse(BaseModel):

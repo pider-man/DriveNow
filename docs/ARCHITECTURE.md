@@ -170,6 +170,9 @@ sequenceDiagram
         S->>L: WARNING rule violation
         S-->>R: CarNotAvailableError
         R-->>C: 409
+    else start before the car's previous rental end (B10)
+        S-->>R: InvalidInputError START_BEFORE_PREVIOUS_END
+        R-->>C: 422
     else ok
         S->>U: rentals.add(start_date)
         S->>U: car.status = in_use (B1)

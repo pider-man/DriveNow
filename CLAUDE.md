@@ -32,7 +32,7 @@
 - Respect the layer boundaries in `docs/ARCHITECTURE.md`:
   - `api` never imports ORM models or sessions, and contains no business rules.
   - `services` never import FastAPI, and depend only on the Protocols in `repositories/interfaces.py`, `messaging/publisher.py` and `services/clock.py`.
-  - Business rules B1–B9 live in the services. DB constraints are only a safety net.
+  - Business rules B1–B10 live in the services. DB constraints are only a safety net.
 - Type hints everywhere, docstrings on public classes and functions, and `logging.getLogger(__name__)` (never `print`).
 - Datetimes are timezone-aware UTC.
 - The `cars` and `rentals` tables contain exactly the PRD fields and nothing more.
