@@ -79,7 +79,7 @@ class RabbitMQPublisher:
                         exchange=self._exchange, routing_key=event.name, body=body, properties=properties
                     )
                     return
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - best effort: any failure is retried once, then logged
                     self._drop_connection()
                     if attempt == 1:
                         logger.warning(
@@ -113,5 +113,5 @@ class RabbitMQPublisher:
             try:
                 if connection.is_open:
                     connection.close()
-            except Exception:  # already broken; nothing more to do
+            except Exception:  # noqa: BLE001, S110 - the connection is already broken; nothing more to do
                 pass

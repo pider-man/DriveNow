@@ -246,9 +246,9 @@ def test_end_in_future_rejected(rental_service, db):
 
 def test_naive_times_treated_as_utc(rental_service, db):
     car = db.seed_car()
-    rental = rental_service.start_rental(car.id, "Dana", start_date=datetime(2026, 10, 1, 8, 0))
+    rental = rental_service.start_rental(car.id, "Dana", start_date=datetime(2026, 10, 1, 8, 0))  # noqa: DTZ001
     assert rental.start_date == datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
-    ended = rental_service.end_rental(rental.id, end_date=datetime(2026, 10, 1, 9, 30))
+    ended = rental_service.end_rental(rental.id, end_date=datetime(2026, 10, 1, 9, 30))  # noqa: DTZ001
     assert ended.end_date == datetime(2026, 10, 1, 9, 30, tzinfo=UTC)
 
 
@@ -256,7 +256,7 @@ def test_naive_future_time_rejected(rental_service, db):
     # 12:30 naive = 12:30 UTC, after the clock's 12:00 UTC.
     car = db.seed_car()
     with pytest.raises(InvalidInputError) as err:
-        rental_service.start_rental(car.id, "Dana", start_date=datetime(2026, 10, 1, 12, 30))
+        rental_service.start_rental(car.id, "Dana", start_date=datetime(2026, 10, 1, 12, 30))  # noqa: DTZ001
     assert err.value.code == "DATE_IN_FUTURE"
 
 

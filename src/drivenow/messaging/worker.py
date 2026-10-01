@@ -84,7 +84,7 @@ def run(connection_factory: Callable[[], Any], *, sleep: Callable[[float], None]
             logger.info("Worker stopping")
             _close(connection)
             return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the worker must survive any broker error and reconnect
             logger.warning("RabbitMQ unavailable (%s: %s); retrying in %s s", type(exc).__name__, exc, backoff)
             _close(connection)
             sleep(backoff)
@@ -97,7 +97,7 @@ def _close(connection: Any) -> None:
     try:
         if connection.is_open:
             connection.close()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - closing a broken connection; nothing more to do
         pass
 
 

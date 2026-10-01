@@ -16,7 +16,6 @@ from drivenow.domain.exceptions import DataIntegrityError
 
 from .conftest import T0
 
-
 # --- Cars -------------------------------------------------------------------------
 
 
@@ -284,7 +283,7 @@ def test_uow_outside_with_block_raises(uow):
 
 def test_dates_are_stored_and_returned_as_aware_utc(uow, add_car, add_rental):
     car = add_car()
-    naive_start = datetime(2026, 10, 1, 8, 0)  # treated as UTC
+    naive_start = datetime(2026, 10, 1, 8, 0)  # noqa: DTZ001 - naive on purpose: treated as UTC
     israel = timezone(timedelta(hours=3))
     end_in_israel = datetime(2026, 10, 1, 14, 0, tzinfo=israel)  # 11:00 UTC
 

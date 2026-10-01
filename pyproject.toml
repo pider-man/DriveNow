@@ -23,6 +23,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "httpx2>=2.13",
+    "ruff>=0.16,<0.17",  # pinned: new ruff releases change the default rule set
 ]
 
 [tool.setuptools.packages.find]
@@ -32,3 +33,10 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120  # the longest lines in the code are ~120 characters
+
+[tool.ruff.lint]
+extend-select = ["I"]  # default rules plus import sorting
