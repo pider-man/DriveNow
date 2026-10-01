@@ -1,0 +1,99 @@
+# DriveNow: API, audit worker, PostgreSQL, RabbitMQ and Prometheus.
+#   docker compose up --build
+# API + Swagger: http://localhost:8000/docs
+# RabbitMQ management UI: http://localhost:15672 (drivenow / drivenow)
+# Prometheus: http://localhost:9090
+name: drivenow
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+psycopg://drivenow:drivenow@postgres:5432/drivenow
+  RABBITMQ_URL: amqp://drivenow:drivenow@rabbitmq:5672/
+  LOG_LEVEL: INFO
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: drivenow
+      POSTGRES_PASSWORD: drivenow
+      POSTGRES_DB: drivenow
+    ports:
+      - "5432:5432"   # published so the test suite can run against it from the host
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/10-init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drivenow -d drivenow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      # The default guest user may only connect from localhost, so use our own.
+      RABBITMQ_DEFAULT_USER: drivenow
+      RABBITMQ_DEFAULT_PASS: drivenow
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      # check_port_connectivity passes only once the AMQP listener accepts connections
+      # (ping is already true earlier, which let clients connect too soon).
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  api:
+    build: .
+    image: drivenow-app:latest
+    environment:
+      <<: *app-env
+      LOG_FILE: /app/logs/drivenow.log
+    ports:
+      - "8000:8000"
+    volumes:
+      - logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      # The slim image has no curl; use Python.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: drivenow-app:latest
+    command: ["python", "-m", "drivenow.worker"]
+    environment:
+      <<: *app-env
+      WORKER_LOG_FILE: /app/logs/worker.log
+    volumes:
+      - logs:/app/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  logs:
