@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from drivenow.api.app import create_app
 from drivenow.config import Settings
 from drivenow.messaging.publisher import InMemoryPublisher
+from drivenow.observability.logging_config import reset_logging
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 NOW_ISO = "2026-10-01T12:00:00Z"
@@ -27,9 +28,20 @@ def publisher() -> InMemoryPublisher:
     return InMemoryPublisher()
 
 
+@pytest.fixture(autouse=True)
+def _release_log_handlers() -> Iterator[None]:
+    yield
+    reset_logging()
+
+
 @pytest.fixture
-def app(publisher: InMemoryPublisher) -> FastAPI:
-    settings = Settings(database_url="sqlite://", _env_file=None)
+def log_file(tmp_path) -> str:
+    return str(tmp_path / "logs" / "drivenow.log")
+
+
+@pytest.fixture
+def app(publisher: InMemoryPublisher, log_file: str) -> FastAPI:
+    settings = Settings(database_url="sqlite://", log_file=log_file, _env_file=None)
     return create_app(settings, clock=FixedClock(), publisher=publisher)
 
 

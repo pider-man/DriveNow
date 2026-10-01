@@ -111,3 +111,12 @@ class ErrorResponse(BaseModel):
 
 class HealthRead(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+class StatsRead(BaseModel):
+    active_cars: int = Field(description="Cars not under maintenance (available or in use).")
+    ongoing_rentals: int = Field(description="Rentals that have not ended.")
+    avg_response_time_ms: float | None = Field(
+        description="Mean HTTP response time since start, excluding /health, /metrics and /stats. "
+        "null before the first measured request."
+    )

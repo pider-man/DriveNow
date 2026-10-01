@@ -66,4 +66,6 @@ def test_swagger_docs_and_openapi(client):
         ("GET", "/rentals"),
         ("GET", "/rentals/{rental_id}"),
         ("GET", "/health"),
+        ("GET", "/metrics"),
+        ("GET", "/stats"),
     }

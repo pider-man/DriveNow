@@ -23,6 +23,7 @@ from drivenow.domain.exceptions import (
 from drivenow.domain.records import RentalRecord
 from drivenow.domain.timeutil import to_utc
 from drivenow.messaging.publisher import EventPublisher
+from drivenow.observability.tracking import NullRecorder, OperationRecorder, track_operation
 from drivenow.repositories.interfaces import UnitOfWork
 from drivenow.services._support import publish_after_commit, rejections_logged, validate_text
 from drivenow.services.clock import Clock
@@ -34,13 +35,19 @@ class RentalService:
     """Business rules for rentals. The rental and its car change in one Unit of Work (B1)."""
 
     def __init__(
-        self, uow_factory: Callable[[], UnitOfWork], publisher: EventPublisher, clock: Clock
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        publisher: EventPublisher,
+        clock: Clock,
+        recorder: OperationRecorder | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._publisher = publisher
         self._clock = clock
+        self._operation_recorder = recorder or NullRecorder()  # read by @track_operation
 
     @rejections_logged(logger, "start_rental")
+    @track_operation("start_rental")
     def start_rental(
         self, car_id: int, customer_name: str, start_date: datetime | None = None
     ) -> RentalRecord:
@@ -90,6 +97,7 @@ class RentalService:
         return record
 
     @rejections_logged(logger, "end_rental")
+    @track_operation("end_rental")
     def end_rental(self, rental_id: int, end_date: datetime | None = None) -> RentalRecord:
         """F5: end a rental once (B7) and make its car available (B1).
 
@@ -125,6 +133,7 @@ class RentalService:
         return record
 
     @rejections_logged(logger, "get_rental")
+    @track_operation("get_rental")
     def get_rental(self, rental_id: int) -> RentalRecord:
         """F7: one rental."""
         with self._uow_factory() as uow:
@@ -134,6 +143,7 @@ class RentalService:
             return RentalRecord.from_model(rental)
 
     @rejections_logged(logger, "list_rentals")
+    @track_operation("list_rentals")
     def list_rentals(self, car_id: int | None = None, ongoing: bool | None = None) -> list[RentalRecord]:
         """F7: rentals, optionally for one car and/or only ongoing or finished ones."""
         with self._uow_factory() as uow:

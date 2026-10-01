@@ -16,6 +16,7 @@ from drivenow.domain.exceptions import (
 )
 from drivenow.domain.records import CarRecord
 from drivenow.messaging.publisher import EventPublisher
+from drivenow.observability.tracking import NullRecorder, OperationRecorder, track_operation
 from drivenow.repositories.interfaces import UnitOfWork
 from drivenow.services._support import (
     publish_after_commit,
@@ -48,13 +49,19 @@ class CarService:
     """Business rules for cars. Every write is one Unit of Work; events go out after commit."""
 
     def __init__(
-        self, uow_factory: Callable[[], UnitOfWork], publisher: EventPublisher, clock: Clock
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        publisher: EventPublisher,
+        clock: Clock,
+        recorder: OperationRecorder | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._publisher = publisher
         self._clock = clock
+        self._operation_recorder = recorder or NullRecorder()  # read by @track_operation
 
     @rejections_logged(logger, "add_car")
+    @track_operation("add_car")
     def add_car(self, model: str, year: int, status: CarStatus | str | None = None) -> CarRecord:
         """F1: add a car. B6: it starts available unless under_maintenance is given (B4)."""
         model = validate_text(model, "model", MODEL_MAX_LENGTH)
@@ -74,6 +81,7 @@ class CarService:
         return record
 
     @rejections_logged(logger, "get_car")
+    @track_operation("get_car")
     def get_car(self, car_id: int) -> CarRecord:
         """F7: one car."""
         with self._uow_factory() as uow:
@@ -83,6 +91,7 @@ class CarService:
             return CarRecord.from_model(car)
 
     @rejections_logged(logger, "list_cars")
+    @track_operation("list_cars")
     def list_cars(self, status: CarStatus | str | None = None) -> list[CarRecord]:
         """F3: all cars, or only those with ``status``."""
         if status is not None:
@@ -94,6 +103,7 @@ class CarService:
             return [CarRecord.from_model(car) for car in uow.cars.list(status)]
 
     @rejections_logged(logger, "update_car")
+    @track_operation("update_car")
     def update_car(
         self,
         car_id: int,
@@ -141,6 +151,7 @@ class CarService:
         return record
 
     @rejections_logged(logger, "delete_car")
+    @track_operation("delete_car")
     def delete_car(self, car_id: int) -> None:
         """F6: delete a car with its finished rental history (B9), unless it's rented (B5)."""
         with self._uow_factory() as uow:

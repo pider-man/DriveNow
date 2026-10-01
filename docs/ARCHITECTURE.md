@@ -237,9 +237,10 @@ sequenceDiagram
 │   │       ├── rentals.py
 │   │       └── system.py         # /health, /metrics, /stats
 │   ├── observability/
-│   │   ├── logging_config.py     # setup_logging(): console + rotating file
-│   │   ├── metrics.py            # gauges, histograms, track_operation decorator
-│   │   └── middleware.py         # request timing middleware
+│   │   ├── logging_config.py     # setup_logging(): console + rotating file, idempotent
+│   │   ├── metrics.py            # AppMetrics: per-app registry, histograms, counter, gauges
+│   │   ├── middleware.py         # request timing middleware (route templates)
+│   │   └── tracking.py           # OperationRecorder protocol + @track_operation decorator
 │   └── messaging/
 │       ├── publisher.py          # EventPublisher protocol, NullPublisher, InMemoryPublisher, RabbitMQPublisher
 │       └── worker.py             # `python -m drivenow.messaging.worker`
@@ -381,9 +382,11 @@ stateDiagram-v2
 
 ## 9. Logging (N4, N5)
 
-- `observability/logging_config.setup_logging(settings)` applies a `logging.config.dictConfig`. It runs once at API startup and once at worker startup.
+- `observability/logging_config.setup_logging(level, log_file)` configures the root logger. It runs at API startup (the app lifespan, and `main()` before uvicorn starts) and at worker startup.
 - Handlers: a `StreamHandler` (stdout) and a `RotatingFileHandler` (`LOG_FILE`, default `logs/drivenow.log`, 5 MB × 3 backups). The directory is created if it's missing. The worker defaults to `logs/worker.log`.
-- Format: `%(asctime)s %(levelname)s %(name)s: %(message)s` with ISO timestamps. Level: `LOG_LEVEL` (default `INFO`).
+- It is idempotent: it marks its own handlers and replaces them on every call, so calling it twice never duplicates output, and handlers it didn't add (such as pytest's capture) are left alone.
+- uvicorn's loggers (`uvicorn`, `uvicorn.error`, `uvicorn.access`) lose their own handlers and propagate to the root, so server and access lines share the same format, console and file. `main()` passes `log_config=None` to uvicorn.
+- Format: `2026-10-01 12:00:00.123 INFO    [drivenow.services.car_service] Car added: ...` (`%(asctime)s.%(msecs)03d %(levelname)-7s [%(name)s] %(message)s`). Level: `LOG_LEVEL` (default `INFO`).
 - Each module uses `logging.getLogger(__name__)`.
 
 | Event | Level | Logged by |
@@ -391,25 +394,29 @@ stateDiagram-v2
 | Car added / updated / deleted (with id and changed fields) | INFO | `CarService` |
 | Rental started / ended (rental id, car id, customer) | INFO | `RentalService` |
 | Business rule rejected (for example rent an unavailable car) | WARNING | services, before raising |
-| Unhandled exception | ERROR with stack trace | global exception handler in `api/app.py` |
+| Request validation rejected (422 from FastAPI) | WARNING | `api/errors.py` |
+| Unhandled exception | ERROR with stack trace | global exception handler in `api/errors.py` |
 | Event publish failed | ERROR | `RabbitMQPublisher` |
 | Event received | INFO | worker |
-| Startup (DB URL without credentials, publisher type) | INFO | `main.py` |
+| Startup (DB URL without password, publisher type, log file) | INFO | `api/app.py` lifespan |
 
 ## 10. Metrics (N6, D5)
 
-`prometheus_client` provides the metrics. `GET /metrics` returns `generate_latest()` in the Prometheus text format.
+`prometheus_client` provides the metrics. Each app owns an `AppMetrics` with its own `CollectorRegistry` (not the global default), so tests can create many apps in one process. `GET /metrics` returns `generate_latest(registry)` in the Prometheus text format.
 
 | Metric | Type | Meaning | How it's computed |
 | --- | --- | --- | --- |
 | `drivenow_active_cars` | Gauge | Cars **not under maintenance** (D5): `available` + `in_use` | `Gauge.set_function` calls `StatsService.active_cars()` (a `cars.count_active()` query in a short read-only session) at scrape time |
 | `drivenow_ongoing_rentals` | Gauge | Rentals with `end_date IS NULL` | `Gauge.set_function` calls `StatsService.ongoing_rentals()` at scrape time |
 | `drivenow_request_duration_seconds` | Histogram, labels `method`, `route`, `status_code` | HTTP request latency | Timing middleware uses `time.perf_counter()`. `route` is the route template (for example `/cars/{car_id}`), so labels stay bounded |
-| `drivenow_operation_duration_seconds` | Histogram, label `operation` | Business operation latency, inside the service layer | The `@track_operation("<name>")` decorator on each service method. Operations: `add_car`, `update_car`, `delete_car`, `get_car`, `list_cars`, `start_rental`, `end_rental`, `get_rental`, `list_rentals`. Recorded on success and on failure |
+| `drivenow_operation_duration_seconds` | Histogram, label `operation` | Business operation latency, inside the service layer | The `@track_operation("<name>")` decorator (`observability/tracking.py`) on each service method. Operations: `add_car`, `update_car`, `delete_car`, `get_car`, `list_cars`, `start_rental`, `end_rental`, `get_rental`, `list_rentals`. Recorded on success and on failure |
+| `drivenow_operation_failures_total` | Counter, labels `operation`, `code` | Failed operations | The same decorator: a `DomainError` counts under its code (for example `CAR_NOT_AVAILABLE`); any other exception counts as `INTERNAL_ERROR` |
 
 The average response time is `drivenow_request_duration_seconds_sum / drivenow_request_duration_seconds_count`, overall or per route. The same applies to operations. In PromQL it's `rate(..._sum[5m]) / rate(..._count[5m])`. The histogram buckets also give percentiles.
 
-The gauges are computed from the database at scrape time, not kept as counters in memory. That keeps them correct across restarts, multiple uvicorn workers and direct DB changes. `/metrics`, `/stats` and `/health` are excluded from the request histogram so monitoring calls don't skew the average.
+The decorator doesn't import Prometheus: services receive an `OperationRecorder` (implemented by `AppMetrics`) through their constructor, defaulting to a no-op recorder (DIP). The request middleware labels requests with the route template; an unmatched path is labelled `<unmatched>`.
+
+The gauges are computed from the database at scrape time, not kept as counters in memory. If the database can't be read, the gauge reports NaN and the error is logged, so `/metrics` still answers. That keeps them correct across restarts, multiple uvicorn workers and direct DB changes. `/metrics`, `/stats` and `/health` are excluded from the request histogram so monitoring calls don't skew the average.
 
 `GET /stats` gives the same numbers as JSON for reviewers who don't run Prometheus. `active_cars` and `ongoing_rentals` come from `StatsService`. `avg_response_time_ms` is the request histogram's total `_sum / _count × 1000` since process start, read from the registry, and is `null` before the first measured request. The router calls only `StatsService` and `observability.metrics`, never a repository.
 
