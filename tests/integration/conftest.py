@@ -1,4 +1,4 @@
-"""Fixtures for data-layer tests: a fresh in-memory SQLite database per test."""
+"""Fixtures for data-layer tests: a fresh, empty database per test."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from drivenow.db.base import Base
 from drivenow.db.models import Car, Rental
 from drivenow.db.session import create_db_engine, create_session_factory, create_tables
 from drivenow.domain.enums import CarStatus
@@ -18,8 +19,10 @@ T0 = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
 
 
 @pytest.fixture
-def engine() -> Iterator[Engine]:
-    engine = create_db_engine("sqlite://")
+def engine(database_url: str) -> Iterator[Engine]:
+    """A fresh, empty database: in-memory SQLite, or TEST_DATABASE_URL (see tests/conftest.py)."""
+    engine = create_db_engine(database_url)
+    Base.metadata.drop_all(engine)
     create_tables(engine)
     yield engine
     engine.dispose()

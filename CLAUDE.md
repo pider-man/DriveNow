@@ -51,4 +51,12 @@ python -m venv .venv                          # Python 3.12+
 
 Settings come from environment variables or `.env` (see `.env.example` and `src/drivenow/config.py`).
 
-The docker compose command will be added in step 8.
+Docker (PostgreSQL, RabbitMQ, API, worker, Prometheus):
+
+```bash
+docker compose up --build -d                 # API :8000, RabbitMQ UI :15672, Prometheus :9090
+docker compose ps                            # all services healthy
+docker compose logs worker                   # AUDIT lines for each event
+# The full test suite on the compose PostgreSQL (database drivenow_test):
+TEST_DATABASE_URL=postgresql+psycopg://drivenow:drivenow@localhost:5432/drivenow_test .venv/Scripts/python -m pytest
+```

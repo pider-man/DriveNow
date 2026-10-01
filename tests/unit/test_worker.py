@@ -122,7 +122,9 @@ def test_run_reconnects_with_backoff_when_broker_is_away(caplog):
 
     assert attempts["n"] == 4
     assert sleeps == [1, 2, 4]
-    assert sum("RabbitMQ unavailable" in r.getMessage() for r in caplog.records) == 3
+    messages = [r.getMessage() for r in caplog.records if "RabbitMQ unavailable" in r.getMessage()]
+    assert len(messages) == 3
+    assert messages[0] == "RabbitMQ unavailable (AMQPConnectionError: connection refused); retrying in 1 s"
 
 
 def test_run_reconnects_after_lost_connection():

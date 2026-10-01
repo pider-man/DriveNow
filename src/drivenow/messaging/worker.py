@@ -75,7 +75,7 @@ def run(connection_factory: Callable[[], Any], *, sleep: Callable[[float], None]
             _close(connection)
             return
         except Exception as exc:
-            logger.warning("RabbitMQ unavailable (%s); retrying in %s s", exc, backoff)
+            logger.warning("RabbitMQ unavailable (%s: %s); retrying in %s s", type(exc).__name__, exc, backoff)
             _close(connection)
             sleep(backoff)
             backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)

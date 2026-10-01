@@ -66,6 +66,17 @@ def test_uvicorn_logs_use_the_same_handlers_and_format(tmp_path):
     assert LINE.match(line) and "[uvicorn.access]" in line
 
 
+def test_pika_connection_chatter_is_quieted(tmp_path):
+    log_file = tmp_path / "drivenow.log"
+    setup_logging("INFO", str(log_file))
+    logging.getLogger("pika.adapters.blocking_connection").info("Created channel=1")
+    logging.getLogger("pika.adapters.blocking_connection").error("Connection workflow failed")
+    logging.getLogger("drivenow.messaging.worker").warning("RabbitMQ unavailable")
+    content = log_file.read_text(encoding="utf-8")
+    assert "Created channel" not in content and "Connection workflow failed" not in content
+    assert "RabbitMQ unavailable" in content
+
+
 def test_level_comes_from_settings(tmp_path):
     log_file = tmp_path / "drivenow.log"
     setup_logging("WARNING", str(log_file))

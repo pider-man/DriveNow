@@ -82,10 +82,13 @@ class RabbitMQPublisher:
                 except Exception as exc:
                     self._drop_connection()
                     if attempt == 1:
-                        logger.warning("Publishing %s failed (%s); reconnecting once", event.name, exc)
+                        logger.warning(
+                            "Publishing %s failed (%s: %s); reconnecting once", event.name, type(exc).__name__, exc
+                        )
                     else:
                         logger.error(
-                            "Failed to publish event %s id=%s after reconnecting: %s", event.name, event.id, exc
+                            "Failed to publish event %s id=%s after reconnecting: %s: %s",
+                            event.name, event.id, type(exc).__name__, exc,
                         )
 
     def close(self) -> None:

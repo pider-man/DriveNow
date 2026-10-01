@@ -1,4 +1,4 @@
-"""API test fixtures: the real app on in-memory SQLite with a fixed clock."""
+"""API test fixtures: the real app on a fresh database (SQLite or TEST_DATABASE_URL) with a fixed clock."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from drivenow.api.app import create_app
 from drivenow.config import Settings
 from drivenow.messaging.publisher import InMemoryPublisher
 from drivenow.observability.logging_config import reset_logging
+
+from ..conftest import reset_database
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 NOW_ISO = "2026-10-01T12:00:00Z"
@@ -40,8 +42,9 @@ def log_file(tmp_path) -> str:
 
 
 @pytest.fixture
-def app(publisher: InMemoryPublisher, log_file: str) -> FastAPI:
-    settings = Settings(database_url="sqlite://", log_file=log_file, _env_file=None)
+def app(publisher: InMemoryPublisher, log_file: str, database_url: str) -> FastAPI:
+    reset_database(database_url)
+    settings = Settings(database_url=database_url, log_file=log_file, _env_file=None)
     return create_app(settings, clock=FixedClock(), publisher=publisher)
 
 

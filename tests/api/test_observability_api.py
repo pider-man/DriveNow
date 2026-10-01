@@ -43,7 +43,8 @@ def test_critical_actions_reach_console_and_log_file(app, log_file, capsys):
         assert client.get("/cars").status_code == 500
 
     expected = [
-        "INFO    [drivenow.api.app] DriveNow API started: database=sqlite:// publisher=InMemoryPublisher",
+        "INFO    [drivenow.api.app] DriveNow API started: database=",
+        "publisher=InMemoryPublisher",
         "INFO    [drivenow.services.car_service] Car added: id=1 model='Toyota Corolla' year=2022 status=available",
         "INFO    [drivenow.services.car_service] Car updated: id=1 changed=year",
         "INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 customer='Dana Levi'",

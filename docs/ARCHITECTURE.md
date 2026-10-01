@@ -21,7 +21,7 @@ DriveNow is a single Python service with a REST interface, plus a small backgrou
 | Message queue | RabbitMQ with `pika` | D4 |
 | Tests | pytest, FastAPI `TestClient` | N7 |
 | Dependencies | `pyproject.toml` (installable with `pip install -e .[dev]`) | N9 |
-| Containers | `Dockerfile` + `docker-compose.yml` (api, worker, postgres, rabbitmq) | N10 |
+| Containers | `Dockerfile` (python:3.12-slim, non-root) + `docker-compose.yml` (api, worker, postgres, rabbitmq, prometheus) | N10 |
 
 The data access is synchronous on purpose. FastAPI runs sync endpoints in its thread pool, and the sync code is simpler to read, test and lock than async code. The load for this exercise doesn't justify async.
 
@@ -194,8 +194,11 @@ sequenceDiagram
 ├── CLAUDE.md
 ├── README.md                     # step 9
 ├── pyproject.toml                # dependencies, pytest config (step 2)
-├── Dockerfile                    # step 8
-├── docker-compose.yml            # api, worker, postgres, rabbitmq (step 8)
+├── Dockerfile                    # one image for the api and the worker; non-root user
+├── .dockerignore
+├── docker-compose.yml            # postgres, rabbitmq, api, worker, prometheus; logs in a named volume
+├── docker/postgres/init-test-db.sql  # creates drivenow_test for the PostgreSQL test run
+├── prometheus/prometheus.yml     # scrapes api:8000/metrics every 15 s
 ├── .env.example
 ├── docs/
 │   ├── PRD.md
@@ -247,7 +250,7 @@ sequenceDiagram
 │   │   └── worker.py             # audit worker: handle_message, run (reconnect loop)
 │   └── worker.py                 # `python -m drivenow.worker`
 └── tests/
-    ├── conftest.py               # SQLite in-memory engine, fakes, TestClient fixtures
+    ├── conftest.py               # TEST_DATABASE_URL (default in-memory SQLite), reset_database
     ├── unit/                     # services with in-memory fake UoW/publisher/clock
     ├── integration/              # repositories + UoW against SQLite
     └── api/                      # endpoints through TestClient
@@ -388,6 +391,7 @@ stateDiagram-v2
 - Handlers: a `StreamHandler` (stdout) and a `RotatingFileHandler` (`LOG_FILE`, default `logs/drivenow.log`, 5 MB × 3 backups). The directory is created if it's missing. The worker defaults to `logs/worker.log`.
 - It is idempotent: it marks its own handlers and replaces them on every call, so calling it twice never duplicates output, and handlers it didn't add (such as pytest's capture) are left alone.
 - uvicorn's loggers (`uvicorn`, `uvicorn.error`, `uvicorn.access`) lose their own handlers and propagate to the root, so server and access lines share the same format, console and file. `main()` passes `log_config=None` to uvicorn.
+- The `pika` logger is set to CRITICAL. pika logs every connection step, and every failed attempt at ERROR with a traceback. The publisher and the worker already log each failure in one line, with the exception type.
 - Format: `2026-10-01T12:00:00.123Z INFO    [drivenow.services.car_service] Car added: ...` (`%(asctime)s.%(msecs)03dZ %(levelname)-7s [%(name)s] %(message)s`). Timestamps are ISO 8601 in **UTC**, like every other time in the system. Level: `LOG_LEVEL` (default `INFO`).
 - Each module uses `logging.getLogger(__name__)`.
 
@@ -452,7 +456,7 @@ The gauges are computed from the database at scrape time, not kept as counters i
 | API | Every endpoint, status code and error body; `/metrics` contains all four metrics; `/stats` returns the right counts | FastAPI `TestClient` with a dependency override to a SQLite test DB |
 | Messaging | Event serialization, and that publisher failure doesn't fail the service | pytest with a mocked `pika` channel |
 
-The tests never need Docker, PostgreSQL or RabbitMQ. `pytest` must pass before every commit (see `CLAUDE.md`).
+The tests never need Docker, PostgreSQL or RabbitMQ: by default every DB-backed test gets a fresh in-memory SQLite database. The same suite also runs on PostgreSQL. Set `TEST_DATABASE_URL` (for example to the compose database `drivenow_test`), and each test drops and recreates the tables there. A URL whose database name doesn't end in `_test` is refused. `pytest` must pass before every commit (see `CLAUDE.md`).
 
 ## 13. Decisions
 

@@ -22,6 +22,10 @@ BACKUP_COUNT = 3
 # uvicorn installs its own handlers on these; we route them through ours instead.
 UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
+# pika logs every connection step (INFO) and every failed attempt (ERROR, with a traceback).
+# Our publisher and worker already log each failure in one line, so silence it.
+QUIET_LOGGERS = ("pika",)
+
 _MARKER = "_drivenow_handler"
 
 
@@ -49,6 +53,9 @@ def setup_logging(level: str = "INFO", log_file: str = "logs/drivenow.log") -> N
         for handler in uvicorn_logger.handlers[:]:
             uvicorn_logger.removeHandler(handler)
         uvicorn_logger.propagate = True
+
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
 def reset_logging() -> None:
