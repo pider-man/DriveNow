@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from drivenow.domain.exceptions import CarNotFoundError
@@ -109,7 +111,7 @@ def test_gauges_read_stats_and_survive_errors():
     metrics.bind_stats(Stats())
     assert metrics.registry.get_sample_value("drivenow_active_cars") == 4
     ongoing = metrics.registry.get_sample_value("drivenow_ongoing_rentals")
-    assert ongoing != ongoing  # NaN
+    assert math.isnan(ongoing)
     body, content_type = metrics.render()
     assert b"drivenow_active_cars 4.0" in body
     assert content_type.startswith("text/plain")
