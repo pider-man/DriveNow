@@ -401,7 +401,7 @@ stateDiagram-v2
 | Event | Level | Logged by |
 | --- | --- | --- |
 | Car added / updated / deleted (with id and changed fields) | INFO | `CarService` |
-| Rental started / ended (rental id, car id, customer) | INFO | `RentalService` |
+| Rental started / ended (rental id, car id, start or end time; no customer name) | INFO | `RentalService` |
 | Business rule rejected (for example rent an unavailable car) | WARNING | services, before raising |
 | Request validation rejected (422 from FastAPI) | WARNING | `api/errors.py` |
 | Unhandled exception | ERROR with stack trace | global exception handler in `api/errors.py` |

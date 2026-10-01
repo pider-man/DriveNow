@@ -90,8 +90,8 @@ class RentalService:
             record = RentalRecord.from_model(rental)
 
         logger.info(
-            "Rental started: id=%s car_id=%s customer=%r start=%s",
-            record.id, record.car_id, record.customer_name, record.start_date.isoformat(),
+            "Rental started: id=%s car_id=%s start=%s",  # no customer name: keep personal data out of logs
+            record.id, record.car_id, record.start_date.isoformat(),
         )
         self._publish(RENTAL_STARTED, record.to_payload())
         return record

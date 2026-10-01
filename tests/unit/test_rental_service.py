@@ -328,9 +328,10 @@ def test_logs_rental_actions_and_rejections(rental_service, db, caplog):
         rental_service.end_rental(rental.id)
 
     messages = [(r.levelname, r.getMessage()) for r in caplog.records]
+    assert not any("Dana Levi" in message for _, message in messages)  # no customer names in logs
     assert (
         "INFO",
-        f"Rental started: id={rental.id} car_id={car.id} customer='Dana Levi' start={NOW.isoformat()}",
+        f"Rental started: id={rental.id} car_id={car.id} start={NOW.isoformat()}",
     ) in messages
     assert ("INFO", f"Rental ended: id={rental.id} car_id={car.id} end={NOW.isoformat()}") in messages
     assert (

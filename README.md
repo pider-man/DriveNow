@@ -373,7 +373,7 @@ Python's built-in `logging` writes to **both the console and a rotating file** (
 
 ```
 2026-10-01T18:17:59.001Z INFO    [drivenow.services.car_service] Car added: id=1 model='Toyota Corolla' year=2022 status=available
-2026-10-01T18:17:59.135Z INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 customer='Dana Levi' start=2026-10-01T18:17:59.128771+00:00
+2026-10-01T18:17:59.135Z INFO    [drivenow.services.rental_service] Rental started: id=1 car_id=1 start=2026-10-01T18:17:59.128771+00:00
 2026-10-01T18:17:59.166Z WARNING [drivenow.services.rental_service] start_rental rejected: CAR_NOT_AVAILABLE: Car 1 is in_use and can't be rented
 2026-10-01T18:17:59.197Z INFO    [drivenow.services.rental_service] Rental ended: id=1 car_id=1 end=2026-10-01T18:17:59.193388+00:00
 2026-10-01T18:17:59.229Z INFO    [drivenow.services.car_service] Car updated: id=3 changed=status model='Kia Picanto' year=2020 status=available
