@@ -54,6 +54,20 @@ def test_end_rental_sets_car_available_in_one_commit(rental_service, db):
     ]
 
 
+def test_end_rental_with_missing_car_is_an_error(rental_service, db, publisher):
+    # A rental whose car is gone breaks an invariant the FK guarantees: not a client error.
+    car = db.seed_car(status=CarStatus.IN_USE)
+    seeded = db.seed_rental(car.id, start_date=NOW - timedelta(hours=2))
+    del db.cars[car.id]
+
+    with pytest.raises(RuntimeError, match=f"Rental {seeded.id} refers to missing car {car.id}"):
+        rental_service.end_rental(seeded.id)
+
+    assert db.rentals[seeded.id].end_date is None
+    assert "commit" not in db.journal
+    assert publisher.events == []
+
+
 def test_end_rental_locks_car_before_rental(rental_service, db):
     # Same lock order as start_rental and delete_car (car first), so they can't deadlock.
     car = db.seed_car(status=CarStatus.IN_USE)

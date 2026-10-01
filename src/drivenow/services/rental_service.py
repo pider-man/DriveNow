@@ -116,6 +116,10 @@ class RentalService:
             if current is None:
                 raise RentalNotFoundError(rental_id)
             car = uow.cars.get(current.car_id, for_update=True)
+            if car is None:
+                # The foreign key makes this impossible, so the data is corrupt: fail loudly
+                # (an unexpected error: 500, logged with its stack trace).
+                raise RuntimeError(f"Rental {rental_id} refers to missing car {current.car_id}")
             rental = uow.rentals.get(rental_id, for_update=True)  # re-read under the lock
             if rental is None:
                 raise RentalNotFoundError(rental_id)
@@ -126,8 +130,7 @@ class RentalService:
                     "end_date can't be before start_date", code=END_BEFORE_START, field="end_date"
                 )
             rental.end_date = end
-            if car is not None:
-                car.status = CarStatus.AVAILABLE
+            car.status = CarStatus.AVAILABLE
             uow.commit()
             record = RentalRecord.from_model(rental)
 
