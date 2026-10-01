@@ -1,6 +1,6 @@
 # DriveNow Car Rental System: PRD
 
-Sep 30, 2026 · @Eldad · Approved 2026-09-30
+Sep 30, 2026 · Gal Aharoni · Approved 2026-09-30
 
 ## Overview and goals
 
