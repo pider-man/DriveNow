@@ -7,7 +7,7 @@ A Python service that manages the DriveNow fleet: add, update, list and delete c
 - **Observability**: console and rotating-file logs in UTC, `/metrics` for Prometheus, and `/stats` as plain JSON.
 - **Message queue**: events such as `rental.started` go to RabbitMQ, and a worker writes an audit line for each one.
 - **Runs two ways**: `docker compose up` (PostgreSQL, RabbitMQ, API, worker, Prometheus), or standalone Python on SQLite with no broker.
-- **212 tests**, which pass on both SQLite and PostgreSQL.
+- **213 tests**, which pass on both SQLite and PostgreSQL.
 
 The approved spec is [docs/PRD.md](docs/PRD.md), and the full design is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -443,7 +443,7 @@ With Docker, Prometheus scrapes `api:8000/metrics` every 15 s. Open http://local
 ## Tests
 
 ```bash
-pytest                                   # 212 tests, in-memory SQLite, no Docker needed
+pytest                                   # 213 tests, in-memory SQLite, no Docker needed
 ```
 
 **The same suite on PostgreSQL.** Run it against the compose database `drivenow_test`, which Postgres creates on first start:
@@ -496,7 +496,7 @@ The PRD's acceptance checklist, with where each item is met:
 - [x] **Critical actions and errors are logged to the console and a file.** [Logging](#logging); `test_critical_actions_reach_console_and_log_file` in [`tests/api/test_observability_api.py`](tests/api/test_observability_api.py).
 - [x] **Metrics for active cars, ongoing rentals and average response time.** [Metrics](#metrics); `test_metrics_gauges_follow_the_database` and `test_stats_values_and_average_exclude_ops_endpoints`.
 - [x] **Separate data access, service and interface layers.** [Layers](#layers); [`tests/test_architecture.py`](tests/test_architecture.py).
-- [x] **At least 4 unit tests, all passing.** [Tests](#tests): 212 passing, on SQLite and on PostgreSQL.
+- [x] **At least 4 unit tests, all passing.** [Tests](#tests): 213 passing, on SQLite and on PostgreSQL.
 - [x] **Runs standalone, with documented install steps and dependency management.** [`pyproject.toml`](pyproject.toml) and [Run it (b)](#b-standalone-python-sqlite-no-broker).
 - [x] **`docker-compose up` starts the full system.** [`docker-compose.yml`](docker-compose.yml) and [Run it (a)](#a-everything-with-docker-compose).
 - [x] **Public repo, feature branch, clear commit messages.** All work is on `feature/vehicle-management`, with one descriptive commit per build step.
