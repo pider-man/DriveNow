@@ -80,6 +80,29 @@ def test_handle_message_logs_audit_line_and_acks(caplog):
     )
 
 
+def test_audit_line_leaves_out_customer_name(caplog):
+    caplog.set_level(logging.INFO)
+    payload = {
+        "id": 1,
+        "car_id": 3,
+        "customer_name": "Dana Levi",
+        "start_date": "2026-10-01T09:00:00+00:00",
+        "end_date": None,
+    }
+    event = DomainEvent(name="rental.started", occurred_at=datetime(2026, 10, 1, 12, 0, tzinfo=UTC), payload=payload)
+    body = json.dumps(event.to_message()).encode()
+    channel = FakeChannel()
+
+    worker.handle_message(channel, method(tag=7), None, body)
+
+    [record] = [r for r in caplog.records if r.name == "drivenow.messaging.worker"]
+    line = record.getMessage()
+    assert "Dana Levi" not in line and "customer_name" not in line
+    assert 'payload={"car_id": 3, "end_date": null, "id": 1, "start_date": "2026-10-01T09:00:00+00:00"}' in line
+    assert channel.calls == [("basic_ack", {"delivery_tag": 7})]
+    assert event.payload["customer_name"] == "Dana Levi"  # the event itself is unchanged
+
+
 def test_malformed_message_is_rejected_without_requeue(caplog):
     for body in (b"not json", json.dumps({"payload": {}}).encode(), b"[]"):
         caplog.clear()

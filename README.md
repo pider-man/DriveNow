@@ -433,9 +433,9 @@ With Docker, Prometheus scrapes `api:8000/metrics` every 15 s. Open http://local
 - **Best effort.** If the broker is down, the publisher reconnects once. If that fails too, it logs an ERROR, and **the request still succeeds**, because the database is the source of truth.
 - **Worker.** The worker (`python -m drivenow.worker`) consumes the durable queue `drivenow.audit`, which is bound to all events (`#`). It writes an audit line for each one, then acknowledges it:
   ```
-  2026-10-01T18:06:15.453Z INFO    [drivenow.messaging.worker] AUDIT rental.started id=76767cc4-… occurred_at=2026-10-01T18:06:15.452956+00:00 payload={"car_id": 1, "customer_name": "Dana Levi", …}
+  2026-10-01T18:06:15.453Z INFO    [drivenow.messaging.worker] AUDIT rental.started id=76767cc4-… occurred_at=2026-10-01T18:06:15.452956+00:00 payload={"car_id": 1, "end_date": null, "id": 1, …}
   ```
-  A malformed message is rejected without requeueing. If the broker goes away, the worker reconnects, waiting 1, 2, 4 … up to 30 s between tries.
+  The audit line leaves out `customer_name`, so personal data stays out of the logs; the event itself still carries it. A malformed message is rejected without requeueing. If the broker goes away, the worker reconnects, waiting 1, 2, 4 … up to 30 s between tries.
 - **Without a broker.** When `RABBITMQ_URL` isn't set, events are simply dropped.
 
 ---
