@@ -1,5 +1,7 @@
 # DriveNow Car Rental System
 
+[![CI](https://github.com/pider-man/DriveNow/actions/workflows/ci.yml/badge.svg)](https://github.com/pider-man/DriveNow/actions/workflows/ci.yml)
+
 A Python service that manages the DriveNow fleet: add, update, list and delete cars, register and end rentals, and always know each car's status (`available`, `in_use`, `under_maintenance`). It exposes a REST API (FastAPI, with Swagger UI). Every critical action is logged to the console and a file. It collects Prometheus metrics and publishes domain events to RabbitMQ, where an audit worker consumes them.
 
 - **REST API** for cars and rentals, with one consistent JSON error format.
