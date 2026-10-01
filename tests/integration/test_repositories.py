@@ -147,6 +147,42 @@ def test_list_rentals_filters_and_count_ongoing(uow, add_car, add_rental):
         assert tx.rentals.count_ongoing() == 2
 
 
+def test_locked_get_refreshes_a_stale_object(tmp_path):
+    # end_rental reads a rental unlocked, then re-reads it FOR UPDATE. The locked read
+    # must return the current row, not the copy already cached in the session.
+    from drivenow.db.session import create_db_engine, create_session_factory, create_tables
+    from drivenow.repositories.rental_repository import SqlAlchemyRentalRepository
+
+    engine = create_db_engine(f"sqlite:///{tmp_path / 'stale.db'}")  # a file: two real connections
+    create_tables(engine)
+    sessions = create_session_factory(engine)
+    try:
+        with sessions() as setup:
+            car = Car(model="Toyota Corolla", year=2022, status=CarStatus.IN_USE)
+            setup.add(car)
+            setup.flush()
+            rental = Rental(car_id=car.id, customer_name="Dana", start_date=T0)
+            setup.add(rental)
+            setup.commit()
+            rental_id = rental.id
+
+        with sessions() as first:
+            rentals = SqlAlchemyRentalRepository(first)
+            cached = rentals.get(rental_id)  # held, like `current` in end_rental
+            assert cached.end_date is None
+
+            with sessions() as second:  # another request ends the rental meanwhile
+                second.get(Rental, rental_id).end_date = T0 + timedelta(hours=1)
+                second.commit()
+
+            assert rentals.get(rental_id).end_date is None  # a plain read returns the stale copy
+            locked = rentals.get(rental_id, for_update=True)
+            assert locked is cached
+            assert locked.end_date == T0 + timedelta(hours=1)  # the locked read reloaded it
+    finally:
+        engine.dispose()
+
+
 def test_get_latest_end_for_car(uow, add_car, add_rental):
     car = add_car()
     other = add_car(model="Other")

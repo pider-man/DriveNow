@@ -47,11 +47,20 @@ def test_end_rental_sets_car_available_in_one_commit(rental_service, db):
     assert ended.end_date == NOW and not ended.ongoing
     assert db.cars[car.id].status == CarStatus.AVAILABLE
     assert db.journal == [
-        f"lock:rental:{seeded.id}",
         f"lock:car:{car.id}",
+        f"lock:rental:{seeded.id}",
         "commit",
         "publish:rental.ended",
     ]
+
+
+def test_end_rental_locks_car_before_rental(rental_service, db):
+    # Same lock order as start_rental and delete_car (car first), so they can't deadlock.
+    car = db.seed_car(status=CarStatus.IN_USE)
+    seeded = db.seed_rental(car.id, start_date=NOW - timedelta(hours=2))
+    rental_service.end_rental(seeded.id)
+    locks = [entry for entry in db.journal if entry.startswith("lock:")]
+    assert locks == [f"lock:car:{car.id}", f"lock:rental:{seeded.id}"]
 
 
 # --- B2: only an available car can be rented ----------------------------------------

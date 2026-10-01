@@ -25,7 +25,9 @@ class SqlAlchemyCarRepository:
     def get(self, car_id: int, *, for_update: bool = False) -> Car | None:
         stmt = select(Car).where(Car.id == car_id)
         if for_update:
-            stmt = stmt.with_for_update()
+            # Lock the row, and reload it even if this session already holds a
+            # (possibly stale) copy, so checks made under the lock see current data.
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return self._session.scalars(stmt).one_or_none()
 
     def list(self, status: CarStatus | None = None) -> list[Car]:
